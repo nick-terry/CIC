@@ -303,7 +303,7 @@ def emIteration(X,r_xList,q,paramsList):
      
     return alpha,mu,sigma
 
-def updateParams(X,rList,q,paramsList,eps=1e-2,maxiter=10,ntrials=10):
+def updateParams(X,rList,q,paramsList,eps=1e-2,maxiter=10,ntrials=10,retCE=False):
     """
     Update params by performing EM iterations until converged
 
@@ -360,7 +360,8 @@ def updateParams(X,rList,q,paramsList,eps=1e-2,maxiter=10,ntrials=10):
             
             i += 1
         
-        ceArray[trial] = ce
+        # May consider regularization on the log-product of alpha
+        ceArray[trial] = ce #- np.log(np.product(alpha)) 
     
     # Choose the best params which decrease cross-entropy the most
     bestParamsInd = np.argmin(ceArray)
@@ -369,7 +370,10 @@ def updateParams(X,rList,q,paramsList,eps=1e-2,maxiter=10,ntrials=10):
     # Restore last params in list to be params form stage t-1
     paramsList[-1] = _params
     
-    return bestParams
+    if not retCE:
+        return bestParams
+    else:
+        return bestParams,ceArray[bestParamsInd]
 
 def plotGMM(params,_ax=None,circle=False):
     coords = np.linspace(-5,5,num=1000)
@@ -434,7 +438,8 @@ if __name__ == '__main__':
     # Mean time to failure for components: start with 10
     numComponents = 2
     # mu = 0 * np.ones(shape=(numComponents,1))
-    # sigma = 3
+    # Variance of each coordinate in initial GMM
+    sigmaSq = 3
     
     #Set a threshold beyond which we consider r_x to be zero to avoid div by zero
     eps = 10**-10
@@ -442,26 +447,33 @@ if __name__ == '__main__':
     # Set jitter used to prevent numerical issues due to zero densities
     jitter = 10**-100
     
-    # Initial guess for GMM params
-    k = 2
-    alpha0 = np.ones(shape=(k,))/k
+    # Number of different GMM intializations to use
+    numGMM = 1
     
-    # Randomly intialize the means of the Gaussian mixture components
-    mu0 = np.random.multivariate_normal(np.zeros(numComponents),
-                                        5*np.eye(numComponents),
-                                        size=k)
-    # mu0 = np.array([[-3,2],
-    #                 [3,-1]])
-    # Set covariance matrix to be identity
-    sigma0 = 2*np.repeat(np.eye(numComponents)[None,:,:],k,axis=0)
-    params = GMMParams(alpha0, mu0, sigma0, numComponents)
+    initGMMList = []
+    for i in range(numGMM):
+        # Initial guess for GMM params
+        k = 2
+        alpha0 = np.ones(shape=(k,))/k
+        
+        # Randomly intialize the means of the Gaussian mixture components
+        mu0 = np.random.multivariate_normal(np.zeros(numComponents),
+                                            np.eye(numComponents),
+                                            size=k)
+        
+        # mu0 = np.random.uniform(-5,5,size=(k,numComponents))
+        # mu0 = np.array([[-3,2],
+        #                 [3,-1]])
+        # Set covariance matrix to be identity
+        sigma0 = sigmaSq * np.repeat(np.eye(numComponents)[None,:,:],k,axis=0)
+        params = GMMParams(alpha0, mu0, sigma0, numComponents)
+        
+        initGMMList.append(params)
     
-    logging.info('Initial GMM Params:\n'+str(params))
-    
-    numIters = 20
-    sampleSize = 1500
+    numIters = 15
+    sampleSize = 1000
     paramSize = numComponents
-    paramsList = [params,]
+    paramsList = []
     rList = []
     cicArray = np.zeros(shape=(numIters,1))
     
@@ -470,36 +482,74 @@ if __name__ == '__main__':
         
         print('Beginning Stage s={}'.format(i))
         
-        # Randomly generate a time-to-failure vector
-        # if i==0:
-        #     x = np.random.uniform(-5,5,size=(sampleSize,mu0.shape[1]))
-        # else:
-        #     x = generateX(params,sampleSize)
-        x = generateX(params,sampleSize)
-        
-        # Run simulation and compute likelihood
-        try:
-            r_x = r(x)
-        except Exception as e:
-            logging.error('Error during r(x): {}'.format(str(e)))
-            raise e
-        rList.append(r_x)
-        
-        # Update the parameters of the GMM
-        _x = np.expand_dims(x,axis=0)
+        # If first stage, need to choose best GMM from init list
         if i==0:
-            X = _x
-        else:
-            X = np.concatenate([X,_x],axis=0)
-        
-        try:
-            params = updateParams(X, rList, q, paramsList, ntrials=10)
-        except Exception as e:
-            logging.error('Error while updating params: {}'.format(str(e)))
-            raise e
             
-        # Add new params to the list
-        paramsList.append(params)
+            initXList = []
+            initRList = []
+            updatedInitGMMList = []
+            ceArray = np.zeros(shape=(numGMM,1))
+            for j,gmmParams in enumerate(initGMMList):
+                
+                # Generate X from each initGMM
+                x = np.random.uniform(-5,5,size=(sampleSize,mu0.shape[1]))
+                #x = generateX(paramsList[-1],sampleSize)
+            
+                # Run simulation and compute likelihood
+                try:
+                    r_x = r(x)
+                except Exception as e:
+                    logging.error('Error during r(x): {}'.format(str(e)))
+                    raise e
+                    
+                initRList.append(r_x)
+                
+                # Update the parameters of the GMM
+                _x = np.expand_dims(x,axis=0)
+                initXList.append(_x)
+                
+            
+                params,ce = updateParams(initXList[j], [r_x,], q, [gmmParams,], ntrials=10, retCE=True)
+                updatedInitGMMList.append(params)
+                ceArray[j] = ce
+                
+            bestParamsInd = np.argmin(ceArray)
+            bestParams = updatedInitGMMList[bestParamsInd]
+            
+            paramsList.append(initGMMList[bestParamsInd])
+            paramsList.append(bestParams)
+            X = initXList[bestParamsInd]
+            rList.append(initRList[bestParamsInd])
+            
+            
+            logging.info('Initial GMM Params:\n'+str(bestParams))
+        
+        else:
+           
+            x = generateX(paramsList[-1],sampleSize)
+            
+            # Run simulation and compute likelihood
+            try:
+                r_x = r(x)
+            except Exception as e:
+                logging.error('Error during r(x): {}'.format(str(e)))
+                raise e
+                
+            rList.append(r_x)
+            
+            # Update the parameters of the GMM
+            _x = np.expand_dims(x,axis=0)
+    
+            X = np.concatenate([X,_x],axis=0)
+            
+            try:
+                params = updateParams(X, rList, q, paramsList, ntrials=10)
+            except Exception as e:
+                logging.error('Error while updating params: {}'.format(str(e)))
+                raise e
+                
+            # Add new params to the list
+            paramsList.append(params)
         
         # Compute the CIC
         try:
