@@ -7,78 +7,24 @@ Created on Thu Oct  8 07:29:55 2020
 """
 
 import scipy.stats as stat
-import scipy.integrate as intgr
 import numpy as np
 import logging
 import datetime as dttm
+import matplotlib.pyplot as plt
 
 # Import cem test version (stored locally, NOT a package!)
 import cem
 from cem import GMMParams
-import simengine as se
-        
-def prodTerm(t,etaNonFail):
-    
-    cdf = stat.norm.cdf(t,etaNonFail,sigma)
-    return np.product(1-cdf)
 
-
-def _p(x,eta):
-    """
-    Compute the probability of having time to failure vector
-
-    Parameters
-    ----------
-    x : numpy array
-        The failure vector.
-    eta : numpy array
-        The mean time to failure (vector).
-
-    Returns
-    -------
-    p
-        Probability of x.
-
-    """
-
-    nonFails = np.where(x==0)[0]
-    fails = np.where(x==1)[0]
-        
-    integrals = np.zeros(shape=(2,1))
-    for i in (0,1):
-        
-        j = 1 - i
-        
-        f_j = lambda t : stat.norm.pdf(t,eta[fails[j]],sigma)*\
-            prodTerm(t, eta[nonFails])
-        innerInt = lambda s : intgr.quad(f_j,s,np.inf)[0]
-        
-        f_i = lambda s : stat.norm.pdf(s,eta[fails[i]],sigma)*innerInt(s)
-        outerInt = intgr.quad(f_i,-np.inf,np.inf)[0]
-        
-        integrals[i] = outerInt
-    
-    return np.sum(integrals)
-
-def old_p(x,eta):
-    
-    if len(x.shape) > 1 and x.shape[0] > 1:
-        n = x.shape[0]
-
-        results = np.zeros(shape=(n,1))
-        
-        for i in range(n):
-            results[i] = _p(x[i,:],eta)
-            
-    else:
-        results = _p(x,eta)
-        
-    return results
-
+'''
+Implement example from Kurtz and Song 2013.
+Eq (19) and setup in p. 39.
+Table 2 Example
+'''
 
 def p(x):
     """
-    Compute the true likelihood of x from normal distribution
+    Compute the true likelihood of x from multivariatenormal distribution
 
     Parameters
     ----------
@@ -90,52 +36,42 @@ def p(x):
 
     """
     
-    results = stat.norm.pdf(x,10,3)
-    
-    # Use log transform to prevent numerical issues
-    log_res = np.sum(np.log(results),axis=1)
-    results = np.exp(log_res)
+    results = stat.multivariate_normal.pdf(x,np.zeros(shape=(2,)),np.eye(2))
     
     return np.expand_dims(results,axis=1)
 
-def _runSim(x):
-    
-    x = np.squeeze(x)
-    
-    # Pull out the branches that failed and simulate.
-    failInd = np.where(x==1)[0]
-    br1,br2 = int(failInd[0]),int(failInd[1])
-    return sim._simulate(br1,br2)
+def h(x):
+    '''
+    h(x) defined in Kurtz and Song
 
-def runSim(x):
-    
-    if len(x.shape) > 1 and x.shape[0] > 1:
-        n = x.shape[0]
+    Parameters
+    ----------
+    x : TYPE
+        DESCRIPTION.
 
-        results = np.zeros(shape=(n,2))
-        
-        for i in range(n):
-            result = _runSim(x[i,:])
-            results[i] = result
-            
-    else:
-        results = np.array(_runSim(x)).reshape((1,2))
-        
-    return results
+    Returns
+    -------
+    TYPE
+        DESCRIPTION.
+
+    '''
+    
+    bb = 5
+    kk = .5
+    ee = .1
+    
+    h_x = (bb-x[:,1]-kk*(x[:,0]-ee)**2) <= 0
+    return np.expand_dims(h_x,axis=1)
 
 def r(x):
     
-    # Run simulation of contingency
-    conting = ttfToContingency(x)
-    simResults = runSim(conting)
+    # Run simulation
+    h_x = h(x)
     
     # Compute probability of contingency vector given current parameters
     density = p(x)
     
-    # Need to expand dims here to match density dims
-    blackout = np.expand_dims(simResults[:,0],axis=1)
-    
-    return blackout*density
+    return h_x*density
 
 def q(params):
     """
@@ -166,7 +102,11 @@ def q(params):
             # Compute density at each observation
             densities = np.zeros(shape=(x.shape[0],params.k()))
             for j in range(params.k()):
-                densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=True)
+                try:
+                    densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=True)
+                except Exception as e:
+                    print(sigma[j,:])
+                    raise(e)
             
             density = np.expand_dims(np.sum(_alpha*densities,axis=1),axis=1) + jitter
             
@@ -192,9 +132,9 @@ def q(params):
     
     return _q
 
-def generateTTF(params,num=1):
+def generateX(params,num=1):
     """
-    Randomly generate a time to failure vector from current estimate of eta.
+    Randomly generate a vector from GMM
 
     Parameters
     ----------
@@ -216,20 +156,12 @@ def generateTTF(params,num=1):
     else:
         mixtureComponents = np.zeros(shape=(num,)).astype(int)
 
-    # Generate the random time to failures from the mixture components
-    timeToFailure = np.zeros(shape=(num,numComponents))
+    # Generate the vectors from the mixture components
+    x = np.zeros(shape=(num,numComponents))
     for i,mixtureComponent in enumerate(mixtureComponents):
         _mu = mu[mixtureComponent,:]
         _sigma = sigma[mixtureComponent,:,:]
-        timeToFailure[i,:] = sim.rs.multivariate_normal(_mu,_sigma)
-    
-    return timeToFailure
-
-def ttfToContingency(timeToFailure):
-    # Use failure times to generate contngency vector
-    failInd = np.argsort(timeToFailure,axis=1)[:,:2].astype(int)
-    x = np.zeros_like(timeToFailure)
-    np.put_along_axis(x, failInd, 1, axis=1)
+        x[i,:] = np.random.RandomState().multivariate_normal(_mu,_sigma)
     
     return x
 
@@ -258,8 +190,12 @@ def expectation(x,q,params):
     # Compute density at each observation
     densities = np.zeros(shape=(x.shape[0],params.k()))
     for j in range(params.k()):
-        densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=True)
-    densities += jitter
+        try:
+            densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=True)
+        except Exception as e:
+            print(sigma[j,:])
+            raise(e)
+    #densities += jitter
     
     alpha_q = _alpha*densities
     # Add jitter to density to prevent div by zero error
@@ -270,7 +206,7 @@ def expectation(x,q,params):
     
     return gamma,density
 
-def emIteration(X,r_xList,q,params):
+def emIteration(X,r_xList,q,paramsList):
     """
      Use EM algorithm to update parameters.   
 
@@ -280,8 +216,9 @@ def emIteration(X,r_xList,q,params):
         Sampled data/observations.
     r_xList : list
         List of the r_x numpy array for each sample s
-    params : GMMParams
-        The current parameters of the Gaussian Mixture model.
+    paramsList : list
+        List of the params from all GMM stages
+
 
     Returns
     -------
@@ -296,26 +233,33 @@ def emIteration(X,r_xList,q,params):
     for s in range(X.shape[0]):
         
         x = X[s,:,:]
-        gamma,density = expectation(x,q,params)
+        gamma,density = expectation(x,q,paramsList[s])
         
         gammaList.append(gamma)
         densityList.append(density)
 
+    params = paramsList[-1]
+    
     r_div_q_arr = np.zeros(shape=(X.shape[0],1))
     r_div_q_gamma_arr = np.zeros(shape=(X.shape[0],params.k()))
     mu_arr  = np.zeros(shape=(X.shape[0],params.k(),X.shape[2]))
-    sigma_arr = np.zeros(shape=(X.shape[0],params.k(),X.shape[2],X.shape[2]))
     
     for s in range(X.shape[0]):
         
+        # Compute the denominator of alpha_j expression
         r_div_q = np.tile(r_xList[s]/densityList[s],(1,params.k()))
+        # Sum over all i, store in array for stage s
         r_div_q_arr[s] = np.sum(r_div_q,axis=0)[0]
-        r_div_q_gamma = r_div_q*gammaList[s]
         
+        # Compute the numerator for alpha_j expression/denominator for mu_j and sigma_j expressions
+        r_div_q_gamma = r_div_q*gammaList[s]
+        # Sum over all i, store in array for stage s/each j
         r_div_q_gamma_arr[s] = np.sum(r_div_q_gamma,axis=0)
+        
         # Tile these quantities so that dimensions match for multiplication
         r_div_q_gamma_tile = np.repeat(np.expand_dims(r_div_q_gamma,axis=-1),X.shape[2],axis=-1)
         x_tile = np.repeat(np.expand_dims(X[s,:,:],axis=1),params.k(),axis=1)
+        # Compute numerator of expression for mu_j, sum over all i, store in array for stage s/each j
         mu_arr[s] = np.sum(r_div_q_gamma_tile*x_tile,axis=0)
         
     # Compute new alpha, mu
@@ -323,28 +267,35 @@ def emIteration(X,r_xList,q,params):
     mu = np.sum(mu_arr,axis=0)/np.repeat(np.expand_dims(np.sum(r_div_q_gamma_arr,axis=0),axis=1),
                                          X.shape[2],axis=1)
     
-    # Compute new sigma
+    sigma_arr = np.zeros(shape=(X.shape[0],params.k(),X.shape[2],X.shape[2]))
     for s in range(X.shape[0]):
 
+        # Tile mu for each sample of stage s
         mu_tile = np.tile(mu,(X.shape[1],1,1))
+        # Tile the samples of stage s for each component mean mu_j
         x_tile = np.repeat(np.expand_dims(X[s,:,:],axis=1),params.k(),axis=1)
+        # Compute the vector X_i-mu_j
         diff = x_tile-mu_tile
         
-        # Compute covar matrices w/ outer products
+        # Compute covar matrices w/ outer product (X_i-mu_j)(X_i-mu_j)^T
         covar = np.zeros(shape=(X.shape[1],params.k(),X.shape[2],X.shape[2]))
         for i in range(X.shape[1]):
             for j in range(params.k()):
                 covarMat = np.outer(diff[i,j,:],diff[i,j,:])
                 covar[i,j,:,:] = covarMat
         
+        # Compute the denominator of expression for sigma_j
         r_div_q = np.tile(r_xList[s]/densityList[s],(1,params.k()))
         r_div_q_gamma = r_div_q*gammaList[s]
+        # Tile the denominator to 
         r_div_q_gamma_tile = np.tile(np.expand_dims(r_div_q_gamma,axis=(-1,-2)),(1,1,X.shape[2],X.shape[2]))
     
         sigma_arr[s,:,:,:] = np.sum(r_div_q_gamma_tile*covar,axis=0)
         
     regularization_diag = covar_regularization * np.repeat(np.expand_dims(np.eye(X.shape[2]),
-                                                                          axis=0),params.k(),axis=0)
+                                                                         axis=0),params.k(),axis=0)
+    
+    # Compute new sigma
     sigma = np.sum(sigma_arr,axis=0)/\
         np.tile(np.expand_dims(np.sum(r_div_q_gamma_arr,axis=0),axis=(-1,-2)),
                 (1,1,X.shape[2],X.shape[2])).squeeze()\
@@ -352,7 +303,7 @@ def emIteration(X,r_xList,q,params):
      
     return alpha,mu,sigma
 
-def updateParams(X,rList,q,oldParamsList,params,eps=1e-2,maxiter=10):
+def updateParams(X,rList,q,paramsList,eps=1e-2,maxiter=10,ntrials=10):
     """
     Update params by performing EM iterations until converged
 
@@ -362,12 +313,14 @@ def updateParams(X,rList,q,oldParamsList,params,eps=1e-2,maxiter=10):
         DESCRIPTION.
     rList : TYPE
         DESCRIPTION.
-    oldParamsList: list
-        List of all previous params
-    params : TYPE
-        DESCRIPTION.
+    paramsList: list
+        List of all GMM params
     eps : TYPE, optional
         DESCRIPTION. The default is 10**-3.
+    maxiter : int
+        The maximum number of EM steps to perform.
+    ntrials : int
+        The number of identical GMM EM algs to run.
 
     Returns
     -------
@@ -375,26 +328,97 @@ def updateParams(X,rList,q,oldParamsList,params,eps=1e-2,maxiter=10):
         DESCRIPTION.
 
     """
-    i = 0
-    delta = np.inf
-    ce = cem.c_bar(X,rList,q,oldParamsList,params)
-    # Loop until EM converges
-    while delta >= eps*np.abs(ce) and i < maxiter:
+    _params = paramsList[-1]
+    paramTrials = [_params.getCopy() for trial in range(ntrials)]
+    ceArray = np.zeros(shape=(ntrials,1))
+    for trial in range(ntrials):
         
-        alpha,mu,sigma = emIteration(X, rList, q, params)
+        params = paramTrials[trial]
+        i = 0
+        delta = np.inf
         
-        params.update(alpha,mu,sigma)
+        ce = cem.c_bar(X,rList,q,paramsList,params)
         
-        _ce = cem.c_bar(X,rList,q,oldParamsList,params)
+        # Loop until EM converges
+        while delta >= eps*np.abs(ce) and i < maxiter:
+            
+            #print('Old Mu: {}'.format(params.get()[1]))
+            
+            alpha,mu,sigma = emIteration(X, rList, q, paramsList)
+            
+            #print('New Mu: {}'.format(mu))
+            
+            params.update(alpha,mu,sigma)
+            paramsList[-1] = params
+            
+            _ce = cem.c_bar(X,rList,q,paramsList,params)
+            
+            delta = ce-_ce
+            #print('Decrease in CE: {}'.format(delta))
+            
+            ce = _ce
+            
+            i += 1
         
-        delta = np.abs(ce-_ce)
-        print(delta)
+        ceArray[trial] = ce
+    
+    # Choose the best params which decrease cross-entropy the most
+    bestParamsInd = np.argmin(ceArray)
+    bestParams = paramTrials[bestParamsInd]
+    
+    # Restore last params in list to be params form stage t-1
+    paramsList[-1] = _params
+    
+    return bestParams
+
+def plotGMM(params,_ax=None,circle=False):
+    coords = np.linspace(-5,5,num=1000)
+    coords_grid = np.transpose([np.tile(coords, coords.size),
+                                np.repeat(coords, coords.size)])
+    q_theta = q(params)
+    density_grid = np.reshape(q_theta(coords_grid),(coords.size,coords.size))
+    
+    # Draw contours of GMM density
+    if _ax is None:
+        fig,ax = plt.subplots(1)
+    else:
+        ax = _ax
         
-        ce = _ce
+    contf = ax.contourf(coords,coords,density_grid,levels=10)
+    
+    if _ax is None:
+        plt.colorbar(contf)
+    
+    # Mark the means of each Gaussian component
+    alpha,mu,sigma = params.get()
+    for j in range(params.k()):
+        ax.scatter(mu[j,0],mu[j,1],marker='x',color='red')
+     
+    if circle:
+        c1 = plt.Circle((mu[0,0],mu[0,1]),np.linalg.norm(mu)/2,color='red',fill=False)
+        ax.add_artist(c1)
         
-        i += 1
-        
-    return params
+    ax.set_xlabel('x1')
+    ax.set_ylabel('x2')
+    ax.set_xlim(-5,5)
+    ax.set_ylim(-5,5)
+    
+    return ax
+
+def plotStage(s,ax=None):
+    
+    ax = plotGMM(paramsList[s],ax)
+
+    ax.scatter(X[s,:,0],X[s,:,1],s=2,color='yellow',alpha=.2,zorder=1)
+    
+def plotStages():
+    
+    sq = np.ceil(np.sqrt(numIters)).astype(int)
+    fig,axes = plt.subplots(sq,sq)
+    axes = [ax for sublist in axes for ax in sublist]
+    
+    for s in range(numIters):
+        plotStage(s,axes[s])
 
 if __name__ == '__main__':
     
@@ -402,20 +426,15 @@ if __name__ == '__main__':
     logging.basicConfig(filename='experiment_{}.log'.format(timestamp),
                         level=logging.INFO)
     
-    np.random.seed(42)
+    np.random.seed(420)
     
     # Use importance sampling to estimate probability of cascading blackout given
     # a random N-2 contingency.
     
-    # Create a SimulationEngine for evaluating r(x)
-    sim = se.SimulationEngine()
-    numComponents = sim.numBranches
-    
-    logging.info('Simulation Case: {}'.format(sim.simulation))
-    
     # Mean time to failure for components: start with 10
-    mu = 0 * np.ones(shape=(numComponents,1))
-    sigma = 3
+    numComponents = 2
+    # mu = 0 * np.ones(shape=(numComponents,1))
+    # sigma = 3
     
     #Set a threshold beyond which we consider r_x to be zero to avoid div by zero
     eps = 10**-10
@@ -426,29 +445,37 @@ if __name__ == '__main__':
     # Initial guess for GMM params
     k = 2
     alpha0 = np.ones(shape=(k,))/k
+    
     # Randomly intialize the means of the Gaussian mixture components
     mu0 = np.random.multivariate_normal(np.zeros(numComponents),
-                                        np.eye(numComponents),
+                                        5*np.eye(numComponents),
                                         size=k)
-    sigma0 = np.ones(shape=(k,numComponents,numComponents))
+    # mu0 = np.array([[-3,2],
+    #                 [3,-1]])
+    # Set covariance matrix to be identity
+    sigma0 = 2*np.repeat(np.eye(numComponents)[None,:,:],k,axis=0)
     params = GMMParams(alpha0, mu0, sigma0, numComponents)
     
     logging.info('Initial GMM Params:\n'+str(params))
     
-    numIters = 2
-    sampleSize = 5
+    numIters = 20
+    sampleSize = 1500
     paramSize = numComponents
     paramsList = [params,]
     rList = []
-    cicArray = np.zeros(shape=(numIters-1,1))
+    cicArray = np.zeros(shape=(numIters,1))
     
     # Loop for executing the algorithm
-    for i in range(numIters-1):
+    for i in range(numIters):
+        
+        print('Beginning Stage s={}'.format(i))
         
         # Randomly generate a time-to-failure vector
-        x = generateTTF(params,sampleSize)
-        # Create N-2 contingency vector from time-to-failures
-        conting = ttfToContingency(x)
+        # if i==0:
+        #     x = np.random.uniform(-5,5,size=(sampleSize,mu0.shape[1]))
+        # else:
+        #     x = generateX(params,sampleSize)
+        x = generateX(params,sampleSize)
         
         # Run simulation and compute likelihood
         try:
@@ -466,10 +493,12 @@ if __name__ == '__main__':
             X = np.concatenate([X,_x],axis=0)
         
         try:
-            params = updateParams(X, rList, q, paramsList, params)
+            params = updateParams(X, rList, q, paramsList, ntrials=10)
         except Exception as e:
             logging.error('Error while updating params: {}'.format(str(e)))
             raise e
+            
+        # Add new params to the list
         paramsList.append(params)
         
         # Compute the CIC

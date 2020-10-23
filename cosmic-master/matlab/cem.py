@@ -12,8 +12,57 @@ Implementation of cross-entropy information criterion method from the paper
 "Information Criterion for Boltzmann Approximation Problems".
 
 '''
-
 import numpy as np
+import copy
+
+class GMMParams:
+    
+    def __init__(self,alpha,mu,sigma,dataDim):
+        
+        # Check all the dims
+        assert(alpha.shape[0]==mu.shape[0])
+        assert(mu.shape[1]==dataDim)
+        assert(sigma.shape[0]==alpha.shape[0])
+        assert(sigma.shape[1]==dataDim and sigma.shape[2]==dataDim)
+        
+        self._dataDim = dataDim
+        self._k = alpha.shape[0]
+        self._alpha = alpha
+        self._mu = mu
+        self._sigma = sigma
+    
+    def k(self):
+        return self._k
+    
+    def get(self):
+        return self._alpha,self._mu,self._sigma
+    
+    def update(self,alpha,mu,sigma):
+        
+        # Check all the dims
+        assert(alpha.shape[0]==mu.shape[0])
+        assert(mu.shape[1]==self._dataDim)
+        assert(sigma.shape[0]==alpha.shape[0])
+        assert(sigma.shape[1]==self._dataDim and sigma.shape[2]==self._dataDim)
+        
+        self._k = alpha.shape[0]
+        self._alpha = alpha
+        self._mu = mu
+        self._sigma = sigma
+    
+    def getCopy(self):
+        return copy.deepcopy(self)
+    
+    def __str__(self):
+        stringRep = ''
+        stringRep += 'k={}\n\n'.format(self._k)
+        for j in range(self._k):
+            stringRep += 'Mixture Component j={}\n'.format(j)
+            stringRep += 'alpha={}\n'.format(self._alpha[j])
+            stringRep += 'mu={}\n'.format(self._mu[j,:])
+            stringRep += 'sigma={}\n\n'.format(self._sigma[j,:,:])
+        
+        return stringRep
 
 def getVectorizedDensity(densityFn):
     """
@@ -73,7 +122,7 @@ def h(x,r_x,q,params,newParams):
     
     return _h
 
-def c_bar(X,rList,q,oldParamsList,newParams):
+def c_bar(X,rList,q,paramsList,newParams):
     """
     Estimate the cross-entropy from the importance sampling
     distribution defined by eta, using the estimator from equation 3.7 of
@@ -91,10 +140,8 @@ def c_bar(X,rList,q,oldParamsList,newParams):
     q : function
         Given parameters, returns a density function from
         the posited parametric family.
-    oldParamsList : list
-        Parameters of the approximation of the target distribution Q^* at each previous stage.
-    newParams : GMMParams
-        The newest params fit using EM algorithm.
+    paramsList : list
+        Parameters of the approximation of the target distribution Q^* at each stage.
 
 
     Returns
@@ -103,19 +150,14 @@ def c_bar(X,rList,q,oldParamsList,newParams):
         The estimated cross-entropy.
 
     """
-    # Make sure the new params weren't accidentally added to the oldParamsList
-    try:
-        # assert(oldParamsList[-1].get()==newParams.get())
-        assert(True)
-    except:
-        raise(Exception('New params are in the oldParamsList! Don\'t do this!'))
+    newParams = paramsList[-1]
     
     # Loop over each stage (including the zeroth stage)
     cumulative_c_bar = 0
-    for s in range(0,X.shape[0]):
+    for s in range(len(paramsList)):
         x = X[s,:,:]
         r_x = rList[s]
-        oldParams = oldParamsList[s]
+        oldParams = paramsList[s]
         
         cumulative_c_bar += np.sum(h(x,r_x,q,oldParams,newParams))
     

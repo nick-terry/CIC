@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Oct 21 15:54:33 2020
+
+@author: nick
+"""
+
+'''
+Implementation of a Gaussian mixture model which is fit using a cross-entropy
+minimizing EM-type procedure.
+'''
+
+import sklearn.mixture as mx
+from sklearn.mixture._gaussian_mixture import *
+import numpy as np
+
+class GaussianMixtureCE(mx.GaussianMixture):
+    
+    def _e_step(self, X):
+        """E step.
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+        Returns
+        -------
+        log_prob_norm : float
+            Mean of the logarithms of the probabilities of each sample in X
+        log_gamma : array, shape (n_samples, n_components)
+            Logarithm of the posterior probabilities (or responsibilities) of
+            the point of each sample in X.
+            
+        
+        """
+        log_prob_norm, log_gamma = self._estimate_log_prob_resp(X)
+        return np.mean(log_prob_norm), log_gamma
+        
+    def _m_step(self, X, log_gamma):
+        """M step.
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+        log_gamma : array-like, shape (n_samples, n_components)
+            Logarithm of the posterior probabilities (or responsibilities) of
+            the point of each sample in X.
+        """
+        n_samples, _ = X.shape
+        self.weights_, self.means_, self.covariances_ = (
+            _estimate_gaussian_parameters(X, np.exp(log_resp), self.reg_covar,
+                                          self.covariance_type))
+        self.weights_ /= n_samples
+        self.precisions_cholesky_ = _compute_precision_cholesky(
+            self.covariances_, self.covariance_type)
