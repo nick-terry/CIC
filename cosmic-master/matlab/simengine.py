@@ -111,7 +111,11 @@ class SimulationEngine:
         """
         
         # Need to specify nargout=2 to get two results correctly
-        blackout,lostDemand = self.simFn(br1+1,br2+1,verbose, nargout=2)
+        try:
+            blackout,lostDemand = self.simFn(br1+1,br2+1,verbose, nargout=2)
+        # If the simulation does not converge, declare a blackout
+        except matlab.engine.MatlabExecutionError:
+            blackout,lostDemand = 1,0
         return blackout,lostDemand
 
 if __name__=='__main__':    
@@ -121,4 +125,5 @@ if __name__=='__main__':
     
     # Model failure time as N(10,3).
     rates = 10 * np.ones(shape=(sim.numBranches,1))
-    result = sim.simulate(rates)
+    #result = sim.simulate(rates)
+    result = sim._simulate(37,13)
