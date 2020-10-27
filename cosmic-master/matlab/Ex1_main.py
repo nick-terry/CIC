@@ -116,7 +116,6 @@ if __name__ == '__main__':
     
     np.random.seed(420)
     
-    # Mean time to failure for components: start with 10
     numComponents = 2
     # mu = 0 * np.ones(shape=(numComponents,1))
     # Variance of each coordinate in initial GMM
@@ -163,6 +162,7 @@ if __name__ == '__main__':
     # Choose the trial with the smallest ending cross-entropy
     bestTrialInd = np.argmin(finalCrossEntropyArr)
     cicList,paramsList,X = trialList[bestTrialInd].getResults()
+    trialList[bestTrialInd].writeResults()
     
     
         

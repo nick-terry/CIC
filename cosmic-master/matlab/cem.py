@@ -9,12 +9,14 @@ Created on Sun Sep 13 13:25:44 2020
 '''
 
 Implementation of cross-entropy information criterion method from the paper
-"Information Criterion for Boltzmann Approximation Problems".
+"Information Criterion for Boltzmann Approximation Problems" by Choe, Chen, and Terry.
 
 '''
 import numpy as np
 import scipy.stats as stat
+import pickle as pck
 import datetime as dttm
+import os
 import copy
 import logging
     
@@ -619,6 +621,43 @@ class CEM:
     def getResults(self):
         return self._results
     
+    def writeResults(self,filename=None):
+        
+        if filename is None:
+            filename = 'results_{}.pck'.format(self.timestamp)
+        
+        else:
+            # Check that the file has .pck extension
+            try:
+                assert(filename.split(os.path.extsep)[-1]=='.pck')
+            except Exception as e:
+                print('Use the file extension {}pck for storing results!'.format(os.path.extsep))
+                raise e
+        
+        results = self.getResults()
+        with open(filename,'wb') as f:
+            pck.dump(results,f)
+            
+        return filename
+            
+    def write(self,filename=None):
+    
+        if filename is None:
+            filename = 'CEM_{}.pck'.format(self.timestamp)
+        
+        else:
+            # Check that the file has .pck extension
+            try:
+                assert(filename.split(os.path.extsep)[-1]=='.pck')
+            except Exception as e:
+                print('Use the file extension {}pck for storing CEM!'.format(os.path.extsep))
+                raise e
+        
+        with open(filename,'wb') as f:
+            pck.dump(self,f)   
+            
+        return filename
+    
     def _run(self,initParams,p,h):
         """
         Run the CEM algorithm.
@@ -658,8 +697,8 @@ class CEM:
         cicArray = np.zeros(shape=(numIters,1))
         
         # Create log file
-        timestamp = dttm.datetime.now().strftime('%m%d%Y_%H%M%S')
-        logging.basicConfig(filename='experiment_{}.log'.format(timestamp),
+        self.timestamp = dttm.datetime.now().strftime('%m%d%Y_%H%M%S')
+        logging.basicConfig(filename='experiment_{}.log'.format(self.timestamp),
                         level=logging.INFO)
         
         logging.info('Initial GMM Params:\n'+str(initParams))
