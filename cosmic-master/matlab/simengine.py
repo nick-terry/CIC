@@ -8,18 +8,24 @@ Created on Wed Sep 30 15:22:14 2020
 
 import matlab
 import matlab.engine
+import io
 import numpy as np
 import scipy.stats as stat
 
 class SimulationEngine:
     
-    def __init__(self,engine=None,seed=42,simulation='39-bus'):
+    def __init__(self,engine=None,seed=42,simulation='39-bus',matlabPrint=False):
         
         #Start a MATLAB engine for running COSMIC simulation
         if engine is None:
             self.eng = matlab.engine.start_matlab()
         else:
             self.eng = engine
+        
+        
+        self.matlabPrint = matlabPrint
+        if not matlabPrint:
+            self.stdout = io.StringIO()
 
         #Set random seed
         self.seed = seed
@@ -112,7 +118,10 @@ class SimulationEngine:
         
         # Need to specify nargout=2 to get two results correctly
         try:
-            blackout,lostDemand = self.simFn(br1+1,br2+1,verbose, nargout=2)
+            if self.matlabPrint:
+                blackout,lostDemand = self.simFn(br1+1,br2+1,verbose, nargout=2)
+            else:
+                blackout,lostDemand = self.simFn(br1+1,br2+1,verbose, nargout=2, stdout=self.stdout)
         # If the simulation does not converge, declare a blackout
         except matlab.engine.MatlabExecutionError:
             blackout,lostDemand = 1,0
@@ -121,7 +130,7 @@ class SimulationEngine:
 if __name__=='__main__':    
     
     # Run a test of the SimulationEngine
-    sim = SimulationEngine()
+    sim = SimulationEngine(matlabPrint=False)
     
     # Model failure time as N(10,3).
     rates = 10 * np.ones(shape=(sim.numBranches,1))

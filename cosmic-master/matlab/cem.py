@@ -529,7 +529,8 @@ class CEM:
             # Compute the denominator of expression for sigma_j
             r_div_q = np.tile(r_xList[s]/densityList[s],(1,params.k()))
             r_div_q_gamma = r_div_q*gammaList[s]
-            # Tile the denominator to 
+            # Tile the denominator 
+            # TODO: fix error here. Not sure why this fails. Should accept tuples
             r_div_q_gamma_tile = np.tile(np.expand_dims(r_div_q_gamma,axis=(-1,-2)),(1,1,X.shape[2],X.shape[2]))
         
             sigma_arr[s,:,:,:] = np.sum(r_div_q_gamma_tile*covar,axis=0)
@@ -545,7 +546,7 @@ class CEM:
          
         return alpha,mu,sigma
     
-    def updateParams(self,X,rList,q,eps=1e-2,maxiter=10,ntrials=10,retCE=False):
+    def updateParams(self,X,rList,q,eps=1e-2,maxiter=10,ntrials=1,retCE=False):
         """
         Update params by performing EM iterations until converged
     
@@ -629,7 +630,7 @@ class CEM:
         else:
             # Check that the file has .pck extension
             try:
-                assert(filename.split(os.path.extsep)[-1]=='.pck')
+                assert(filename.split(os.path.extsep)[-1]=='pck')
             except Exception as e:
                 print('Use the file extension {}pck for storing results!'.format(os.path.extsep))
                 raise e
@@ -648,7 +649,7 @@ class CEM:
         else:
             # Check that the file has .pck extension
             try:
-                assert(filename.split(os.path.extsep)[-1]=='.pck')
+                assert(filename.split(os.path.extsep)[-1]=='pck')
             except Exception as e:
                 print('Use the file extension {}pck for storing CEM!'.format(os.path.extsep))
                 raise e
