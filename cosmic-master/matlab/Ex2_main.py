@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Thu Oct  8 07:29:55 2020
+Created on Thu Oct 29 17:18:00 2020
 
 @author: nick
 """
@@ -9,8 +9,6 @@ Created on Thu Oct  8 07:29:55 2020
 import scipy.stats as stat
 import numpy as np
 import matplotlib.pyplot as plt
-import multiprocessing as mp
-import csv
 
 # Import cem test version (stored locally, NOT a package!)
 import cem
@@ -56,18 +54,19 @@ def h(x):
     '''
     
     bb = 5
-    kk = .5
-    ee = .1
+    kk = .1
+    ee = 0
     
     h_x = (bb-x[:,1]-kk*(x[:,0]-ee)**2) <= 0
     return np.expand_dims(h_x,axis=1)
 
 def plotGMM(params,q,_ax=None,circle=False):
-    coords = np.linspace(-5,5,num=1000)
-    coords_grid = np.transpose([np.tile(coords, coords.size),
-                                np.repeat(coords, coords.size)])
+    x_coords = np.linspace(-6,6,num=1000)
+    y_coords = np.linspace(2,6,num=1000)
+    coords_grid = np.transpose([np.tile(x_coords, y_coords.size),
+                                np.repeat(y_coords, x_coords.size)])
     q_theta = q(params)
-    density_grid = np.reshape(q_theta(coords_grid),(coords.size,coords.size))
+    density_grid = np.reshape(q_theta(coords_grid),(x_coords.size,y_coords.size))
     
     # Draw contours of GMM density
     if _ax is None:
@@ -75,7 +74,7 @@ def plotGMM(params,q,_ax=None,circle=False):
     else:
         ax = _ax
         
-    contf = ax.contourf(coords,coords,density_grid,levels=10)
+    contf = ax.contourf(x_coords,y_coords,density_grid,levels=10)
     
     if _ax is None:
         plt.colorbar(contf)
@@ -92,7 +91,7 @@ def plotGMM(params,q,_ax=None,circle=False):
     ax.set_xlabel('x1')
     ax.set_ylabel('x2')
     ax.set_xlim(-5,5)
-    ax.set_ylim(-5,5)
+    ax.set_ylim(2,6)
     
     return ax
 
@@ -110,13 +109,12 @@ def plotStages(paramsList,q,X):
     axes = [ax for sublist in axes for ax in sublist]
     
     for s in range(numIters):
-        plotStage(paramsList,q,X,s,axes[s])    
+        plotStage(paramsList,q,X,s,axes[s])
+
+if __name__ == '__main__':
     
-def runReplicate(seed):
+    np.random.seed(420)
     
-    np.random.seed(seed)
-    
-    # Run the CEM procedure
     dataDim = 2
     # mu = 0 * np.ones(shape=(numComponents,1))
     # Variance of each coordinate in initial GMM
@@ -131,52 +129,14 @@ def runReplicate(seed):
                                         np.eye(dataDim),
                                         size=k)
     
+    # mu0 = np.random.uniform(-5,5,size=(k,numComponents))
+    # mu0 = np.array([[-3,2],
+    #                 [3,-1]])
     # Set covariance matrix to be identity
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    procedure = cem.CEM(initParams,p,h,numIters=7,sampleSize=1000,seed=seed,log=False)
+    procedure = cem.CEM(initParams,p,h,numIters=6,sampleSize=1000)
     procedure.run()
-    
-    # Estimate the failure probability
-    rho = procedure.rho(procedure.X[1:,:,:],
-                        procedure.rList[1:],
-                        procedure.q,
-                        procedure.paramsList[1:])
-    
-    print('Done with replicate!')
-    
-    return rho,procedure
-
-if __name__ == '__main__':
-    
-    np.random.seed(42)
-    
-    numReps = 100
-    
-    # Get random seeds for each replication
-    seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
-    
-    # Create multiprocessing pool w/ 28 nodes for Hyak cluster
-    # with mp.Pool(28) as _pool:
-    #     result = _pool.map_async(runReplicate,
-    #                              list(seeds),
-    #                              callback=lambda x : print('Done!'))
-    #     result.wait()
-    #     resultList = result.get()
-    rhoList = []
-    for seed in seeds:
-        rho,ce = runReplicate(seed)
-        rhoList.append(rho)
-    
-    # rhoList = [item[0] for item in resultList]
-    toCsvList = [[rho,] for rho in rhoList]
-    
-    print('Mean: {}'.format(np.mean(rhoList)))
-    print('Std Err: {}'.format(stat.sem(rhoList)))
-    # Save the estimates of failure probabilty to csv
-    with open('results.csv','w') as f:
-        writer = csv.writer(f)
-        # Header row
-        writer.writerow(['rho',])
-        writer.writerows(toCsvList)
+    cicList,paramsList,X = procedure.getResults()
+    procedure.write()
