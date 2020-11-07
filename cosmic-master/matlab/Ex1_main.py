@@ -152,7 +152,7 @@ if __name__ == '__main__':
     
     np.random.seed(42)
     
-    numReps = 100
+    numReps = 1
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
@@ -175,8 +175,8 @@ if __name__ == '__main__':
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('results.csv','w') as f:
-        writer = csv.writer(f)
-        # Header row
-        writer.writerow(['rho',])
-        writer.writerows(toCsvList)
+    # with open('results.csv','w') as f:
+    #     writer = csv.writer(f)
+    #     # Header row
+    #     writer.writerow(['rho',])
+    #     writer.writerows(toCsvList)

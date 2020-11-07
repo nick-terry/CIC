@@ -136,7 +136,7 @@ def runReplicate(seed):
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    procedure = cem.CEM(initParams,p,h,numIters=7,sampleSize=1000,seed=seed,log=False)
+    procedure = cem.CEM(initParams,p,h,numIters=7,sampleSize=1000,seed=seed,log=True)
     procedure.run()
     
     # Estimate the failure probability

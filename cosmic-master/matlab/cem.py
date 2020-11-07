@@ -670,6 +670,7 @@ class CEM:
                 if not retCE:
                     return None
                 else:
+                    errStr = ''
                     if params.k()==1:
                         numEventsOcc = np.zeros(self.X.shape[0])
                         for i in range(self.X.shape[0]):
@@ -721,7 +722,7 @@ class CEM:
         """
         initParamsList = []
         
-        # At stage zero, randomly choose GMM params by drawing from standard MVG dist.
+        # At stage zero, randomly choose all GMM params by drawing from standard MVG dist.
         if stage==0:
             
             try:
@@ -745,41 +746,101 @@ class CEM:
                 
                 initParamsList.append(params)
         
-        # If stage > 0, we create init params by sampling from observations from s=1,...,t
+        # If stage > 0, we create half of init params from MVG and half of init params by sampling from observations from s=1,...,t
         else:
             
             # Compute the entropy of observations w.r.t the dist they were sampled from and current params
             # Exclude observations from the zeroth stage
-            entrArr = np.zeros(shape=(self.X.shape[0]-1,self.X.shape[1]))
-            for i in range(1,self.X.shape[0]-1):
-                entrArr[i] = np.squeeze(self.entropy(self.X[i,:,:],
-                                                     self.rList[i],
-                                                     self.q,
-                                                     self.paramsList[i],
-                                                     self.paramsList[-1]))
+            # entrArr = np.zeros(shape=(self.X.shape[0]-1,self.X.shape[1]))
+            # for i in range(0,self.X.shape[0]-1):
+            #     entrArr[i] = np.squeeze(self.entropy(self.X[i,:,:],
+            #                                           self.rList[i],
+            #                                           self.q,
+            #                                           self.paramsList[i],
+            #                                           self.paramsList[-1]))
+                  
+            # Get indices where event occurred/didn't occur
+            zeroIndStage = []
+            zeroIndSamp = []
+            posIndStage = []
+            posIndSamp = []
+            
+            for i in range(0,self.X.shape[0]-1):
+                # print('rList shape:{}'.format(self.rList[i].shape))
+                hPosInd = np.where(np.squeeze(self.rList[i])>0)[0]
+                # print('hPos:{}'.format(hPosInd))
+                posIndStage += [i for ind in hPosInd]
+                posIndSamp += list(hPosInd)
+                
+                hZeroInd = np.where(np.squeeze(self.rList[i])<=0)[0]
+                zeroIndStage += [i for ind in hZeroInd]
+                zeroIndSamp += list(hZeroInd)
+            
+            zeroIndStage = np.array(zeroIndStage)
+            zeroIndSamp = np.array(zeroIndSamp)
+            posIndStage = np.array(posIndStage)
+            posIndSamp = np.array(posIndSamp)
             
             # Get indices where entropy is greater than zero
-            posIndStage,posIndSamp = np.where(entrArr>0)
+            # posIndStage,posIndSamp = np.where(entrArr>0)
+            # print(self.X.shape)
+            # print('number of event occurences: {}'.format(len(posIndStage)))
             
-            # For each initParams, randomly select k samples w/o replacement. Prefer positive entropy samples.
-            numChoices = posIndStage.shape[0]
-            for i in range(numInitParams):
+            # Get half of init params by sampling from the MVG
+            numMVGParams = numInitParams//2
+            
+            try:
+                assert(dim is not None)
+            except Exception as e:
+                print('Dim must be defined for creating initial params!')
+                raise e
+                
+            for i in range(numMVGParams):
+                # Initial guess for GMM params
+                alpha0 = np.ones(shape=(k,))/k
+                
+                # print(len(posIndStage))
+                # print(len(posIndSamp))
+                # The mean for the MVG is chosen to be the mean of all observations where h>0
+                selectedData = self.X[posIndStage,posIndSamp,:]
+                # print('shape of mean of event data: {}'.format(selectedData.shape))
+                muPosH = np.mean(selectedData,axis=0)
+                
+                # Make sure nothing funny happened when computing this mean
+                try:
+                    assert(muPosH.shape[0]==self.X.shape[-1])
+                except Exception as e:
+                    print('Computing mean observation failed somehow!')
+                    if self.log:
+                        logging.ERROR('Computing mean observation failed somehow!')
+                    raise e
+                
+                # Randomly intialize the means of the Gaussian mixture components
+                mu0 = np.random.multivariate_normal(muPosH,
+                                                    np.eye(dim),
+                                                    size=k)
+                
+                # Set covariance matrix to be identity
+                sigma0 = 3 * np.repeat(np.eye(dim)[None,:,:],k,axis=0)
+                params = GMMParams(alpha0, mu0, sigma0, dim)
+                
+                initParamsList.append(params)
+              
+            # For the remaining initParams, randomly select k samples w/o replacement. Prefer positive entropy samples.
+            numChoices = len(posIndStage)
+            for i in range(numInitParams-numMVGParams):
                 
                 if numChoices>0:
-                    choice = np.random.choice(range(numChoices),size=min(k,numChoices),replace=False)
+                    choice = np.random.choice(range(numChoices),size=min(k,numChoices),replace=False).astype(int)
                     stageInds,sampInds = posIndStage[choice],posIndSamp[choice]
                 else:
-                    stageInds,sampInds = np.array([]),np.array([])
+                    stageInds,sampInds = [],[]
                 
                 # If there was not enough samples w/ positive entropy, draw some with 0 entropy
                 if len(stageInds) < k:
                     
-                    # Get indices where entropy is greater than zero
-                    zeroIndStage,zeroIndSamp = np.where(entrArr<=0)
-                    choices = (range(len(zeroIndStage)))
-                    
                     # Randomly select remaining needed samples w/o replacement
-                    choice = np.random.choice(choices,size=k-len(stageInds),replace=False)
+                    choice = np.random.choice(range(len(zeroIndSamp)),size=k-len(stageInds),replace=False).astype(int)
                     remStageInds,remSampInds = zeroIndStage[choice],zeroIndSamp[choice]
                     
                     # Append to existing indices
@@ -787,9 +848,9 @@ class CEM:
                     
                 # Create XBar matrix by concatenating the data vectors
                 stageInds,sampInds = stageInds.astype(int),sampInds.astype(int)
-                # TODO: make sure this indexing is correct. 
-                # I believe we need to add one since we compute the entropy only for s=1,..t (exclude s=0)
-                XBar = self.X[stageInds+1,sampInds,:]
+                
+                # Get the sampled data
+                XBar = self.X[stageInds,sampInds,:]
                 
                 # Compute covar matrix for GMM params
                 p = self.X.shape[-1]
@@ -1051,9 +1112,11 @@ class CEM:
             
             try:
                 # Run the main operations of the stage
-                bestParamsByK,cicByK,cicMA = self.runStage(s, self.paramsList[s], kMin=1)
+                bestParamsByK,cicByK,cicMA = self.runStage(s, self.paramsList[s], kMin)
             except Exception as e:
+                print('Error during runStage: {}'.format(str(e)))
                 if self.log:
+                    print('Aborting replication {} due to error!'.format(__name__))
                     logging.ERROR(str(e))
                 # Write out the CEM object for diagnosing the error
                 self.write()
@@ -1096,11 +1159,14 @@ class CEM:
             
         return filename
             
-    def write(self,filename=None):
+    def write(self,filename=None,error=False):
     
         if filename is None:
-            filename = 'CEM_{}.pck'.format(self.timestamp)
-        
+            if error:
+                filename = 'CEM_{}_ERROR.pck'.format(self.timestamp)
+            else:
+                filename = 'CEM_{}.pck'.format(self.timestamp)
+            
         else:
             # Check that the file has .pck extension
             try:
