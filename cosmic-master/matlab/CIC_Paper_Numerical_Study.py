@@ -136,14 +136,11 @@ def runReplicate(seed):
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    procedure = cem.CEM(initParams,p,h,numIters=7,sampleSize=1000,seed=seed,log=True)
+    procedure = cem.CEM(initParams,p,h,numIters=2,sampleSize=1000,seed=seed,log=True,verbose=True)
     procedure.run()
     
     # Estimate the failure probability
-    rho = procedure.rho(procedure.X,
-                        procedure.rList,
-                        procedure.q,
-                        procedure.paramsList)
+    rho = procedure.rho()
     
     print('Done with replicate!')
     
@@ -153,35 +150,35 @@ if __name__ == '__main__':
     
     np.random.seed(420)
     
-    numReps = 50
+    numReps = 1
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
     
     # Create multiprocessing pool w/ 28 nodes for Hyak cluster
-    with mp.Pool(28) as _pool:
-        result = _pool.map_async(runReplicate,
-                                  list(seeds),
-                                  callback=lambda x : print('Done!'))
-        result.wait()
-        resultList = result.get()
-    # rhoList = []
-    # for seed,i in zip(list(seeds),range(numReps)):
-    #     rho,ce = runReplicate(seed,i)
-    #     rhoList.append(rho)
+    # with mp.Pool(28) as _pool:
+    #     result = _pool.map_async(runReplicate,
+    #                               list(seeds),
+    #                               callback=lambda x : print('Done!'))
+    #     result.wait()
+    #     resultList = result.get()
+    rhoList = []
+    for seed in list(seeds):
+        rho,ce = runReplicate(seed)
+        rhoList.append(rho)
     
-    rhoList = [item[0] for item in resultList]
-    #toCsvList = [[rho,] for rho in rhoList]
-    toCsvList = [[item[0],item[1].paramsList[-1].k()] for item in resultList]
+    # rhoList = [item[0] for item in resultList]
+    toCsvList = [[rho,] for rho in rhoList]
+    # toCsvList = [[item[0],item[1].paramsList[-1].k()] for item in resultList]
     
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('results.csv','w') as f:
-        writer = csv.writer(f)
-        # Header row
-        writer.writerow(['rho','final_k'])
-        writer.writerows(toCsvList)
+    # with open('results.csv','w') as f:
+    #     writer = csv.writer(f)
+    #     # Header row
+    #     writer.writerow(['rho','final_k'])
+    #     writer.writerows(toCsvList)
     
 
     

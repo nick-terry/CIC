@@ -229,7 +229,13 @@ def negCETest(X,proc,params,eng,epsilon):
     Hx_WxM = npToMAT(np.array(eng.workspace['Wx'])*h(X[0,:,:]))
     
     matlabRes = eng.negCE(XM,Hx_WxM,gmm)
-    pythonRes = -proc.c_bar(X,[r,],proc.q,proc.log_q,[params,],params)
+    proc.X = X
+    proc.Hx_WxList.append(Hx_Wx)
+    pythonRes = -proc.c_bar(params)
+    
+    # Reset these
+    proc.X = None
+    proc.Hx_WxList = []
     
     return np.abs(matlabRes-pythonRes)<epsilon
 
@@ -256,7 +262,8 @@ def rhoTest(X,proc,params,eng,epsilon):
     eng.workspace['Hx_Wx'] = npToMAT(np.array(eng.workspace['Wx'])*h(X[0,:,:]))
     
     matlabRes = eng.eval('mean(Hx_Wx)')
-    pythonRes = proc.rho(proc.X,proc.rList,proc.q,proc.paramsList)
+    #pythonRes = proc.rho(proc.X,proc.rList,proc.q,proc.paramsList)
+    pythonRes = proc.rho()
     
     return np.abs(matlabRes-pythonRes)<epsilon
 
@@ -297,5 +304,5 @@ if __name__=='__main__':
     proc.cicArray[0] = cicByK[bestInd]
     
     # Check that rho is computed correctly
-    assert rhoTest(proc.X,proc,proc.paramsList[-1],eng,epsilon)
+    assert rhoTest(proc.X,proc,proc.initParams,eng,epsilon)
     

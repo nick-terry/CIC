@@ -95,19 +95,18 @@ class CEM:
         """
         
         self.initParams = initParams
+        self.paramsList = [initParams,]
         self.dim = initParams.get()[1].shape[1]
         self.p = p
         self.h = h
         
-        self.paramsList = []
         self.hList = []
         self.rList = []
         self.Hx_WxList = []
         
         # Store some historical data as procedure is executed
         self.bestParamsLists = []
-        self.cicLists = []
-        
+        self.cicLists = [] 
         
         # Some important constants which can be changed
         # Set a threshold beyond which we consider r_x to be zero to avoid div by zero
@@ -211,7 +210,7 @@ class CEM:
         
         return _entr
     
-    def c_bar(self,X,rList,q,log_q,paramsList,newParams):
+    def c_bar(self,params):
         """
         Estimate the cross-entropy from the importance sampling
         distribution defined by eta, using the estimator from equation 3.7 of
@@ -219,43 +218,26 @@ class CEM:
     
         Parameters
         ----------
-        X : numpy array
-            The samples draw from the importance sampling distribution. First
-            dimension is stage, second dimension number of samples, third dimension is the dimension of
-            the space from which each observation is drawn (i.e. X \in R^3).
-        rList : list
-            List containing the non-negative function r to which the target density is proportional,
-            evaluated at the sampled points X, for each stage.
-        q : function
-            Given parameters, returns a density function from
-            the posited parametric family.
-        log_q : function
-            Given parameters, returns a log density function from
-            the posited parametric family.
-        paramsList : list
-            Parameters of the approximation of the target distribution Q^* at each stage.
+        params : list
+            Parameters of the approximation we wish to estimate cross entropy for
     
     
         Returns
         -------
-        c_hat : float
+        _c_bar : float
             The estimated cross-entropy.
     
         """
         
-        # Loop over each stage (including the zeroth stage)
-        cumulative_c_bar = 0
-        for s in range(len(paramsList)):
-            x = X[s,:,:]
-            r_x = rList[s]
-            oldParams = paramsList[s]
-            
-            cumulative_c_bar += np.sum(self.entropy(x,r_x,q,log_q,oldParams,newParams))
+        X = np.concatenate(self.X,axis=0)
+        log_q_theta = self.log_q(params)
+        llh = log_q_theta(X)
         
-        _c_bar = -1/X.shape[0]/X.shape[1] * cumulative_c_bar
+        _c_bar = -np.mean(llh * np.concatenate(self.Hx_WxList))
+        
         return _c_bar
     
-    def rho(self,X,rList,q,paramsList):
+    def rho(self):
         """
         Vectorized computation of the consistent estimator of rho given in equation
         3.12 of the paper.
@@ -282,25 +264,16 @@ class CEM:
     
         """
         # Use consistent unbiased estimator for zeroth stage
-        if X.shape[0]==1:
-            q_theta = q(paramsList[0])
-            _rho = np.mean(rList[0]/q_theta(X[0,:,:]))
+        if len(self.X)==1:
+            _rho = np.mean(np.concatenate(self.Hx_WxList,axis=0))
         
         # Otherwise, use cumulative estimate that excludes zeroth stage
         else:
-            cumulativeSum = 0
-            
-            # Loop over data from each iteration. Exclude initial guess.
-            for s in range(1,X.shape[0]):
-                q_theta = q(paramsList[s])
-                r_x = rList[s]
-                cumulativeSum += np.sum(r_x/q_theta(X[s,:,:]))
-            
-            _rho = cumulativeSum/X.shape[1]/(X.shape[0]-1)
+            _rho = np.mean(np.concatenate(self.Hx_WxList[1:],axis=0))
             
         return _rho
     
-    def cic(self,X,rList,q,log_q,paramsList,params):
+    def cic(self,params):
         """
         Compute the cross-entropy information criterion (CIC) defined in equation 3.13 
         of the paper. This is a more general implementation which does not specify
@@ -308,21 +281,6 @@ class CEM:
     
         Parameters
         ----------
-        X : numpy array
-            The samples draw from the importance sampling distribution. First
-            dimension is stage, second dimension number of samples, third dimension is the dimension of
-            the space from which each observation is drawn (i.e. X \in R^3).
-        rList : list
-            List containing the non-negative function r to which the target density is proportional,
-            evaluated at the sampled points X, for each stage.
-        q : function
-            Given parameters, returns a density function from
-            the posited parametric family.
-        log_q : function
-            Given parameters, returns a log density function from
-            the posited parametric family.
-        paramsList : list
-            Parameters of the approximation of the target distribution Q^* at each previous stage.
         params : GMMParams
             Params for which CIC is computed.
         
@@ -332,23 +290,15 @@ class CEM:
             The CIC.
     
         """
+        X = np.concatenate(self.X,axis=0)
         
         # Compute dimension of model parameter space from the number of mixtures, k
         k = params.k()
-        p = X.shape[2]
+        p = X.shape[1]
         d = (k-1)+k*(p+p*(p+1)/2)
         
-        # If we are in stage 0
-        if X.shape[0]==1:
-            _cic = self.c_bar(X,rList,q,log_q,paramsList,params)\
-                + self.rho(X,rList,q,paramsList+[params,])*d/X.shape[0]/X.shape[1]
-        # Otherwise, exclude data from stage 0
-        else:
-            _X = X[1:,:,:]
-            _paramsList = paramsList[1:]
-            _rList = rList[1:]
-            _cic = self.c_bar(X,rList,q,log_q,paramsList,params)\
-                + self.rho(_X,_rList,q,_paramsList+[params,])*d/(X.shape[0]-1)/X.shape[1]
+        _cic = self.c_bar(params) + self.rho()*d/X.shape[0]
+
         return _cic
     
     def r(self,x):
@@ -551,8 +501,7 @@ class CEM:
         # # Replace values less than 1e-200 with jitter value to prevent div by zero error, overflow
         # log_densities[log_densities<self.jitter] = self.jitter
         log_alpha_q = _log_alpha + log_densities
-
-        
+  
         # Add jitter to density to prevent div by zero error
         log_density = np.expand_dims(spc.logsumexp(log_alpha_q,axis=1),axis=1) + self.jitter
         _log_density = np.tile(log_density,(1,params.k()))
@@ -568,15 +517,7 @@ class CEM:
             print('Gammas don\'t sum to one for at least one observation!')
             raise e
         
-        density = np.exp(log_density)        
-        
-        try:
-            assert np.all(density>0)
-        except Exception as e:
-            print('Densities of zero!')
-            raise e
-        
-        return gamma,density
+        return gamma
     
     def emIteration(self,params):
         """
@@ -601,15 +542,14 @@ class CEM:
         X,r_xList,q = self.X,self.rList,self.q
         
         gammaList = []
-        densityList = []
+        # densityList = []
     
         for s in range(X.shape[0]):
             
             x = X[s,:,:]
-            gamma,density = self.expectation(x,q,params)
+            gamma = self.expectation(x,q,params)
             
             gammaList.append(gamma)
-            densityList.append(density)
         
         r_div_q_arr = np.zeros(shape=(X.shape[0],1))
         r_div_q_gamma_arr = np.zeros(shape=(X.shape[0],params.k()))
@@ -618,25 +558,21 @@ class CEM:
         for s in range(X.shape[0]):
             
             # Compute the denominator of alpha_j expression
-            # An overflow may occur here...
-            # r_div_q = np.tile(r_xList[s]/densityList[s],(1,params.k()))
             r_div_q = self.Hx_WxList[s]
-            
-            # # If we get a divide by zero/overflow
-            if np.any(r_div_q==np.inf):
-                print(densityList[s][r_div_q[:,:1]==np.inf])
-            
+
             # Sum over all i, store in array for stage s
             r_div_q_arr[s] = np.sum(r_div_q,axis=0)[0]
             
             # Compute the numerator for alpha_j expression/denominator for mu_j and sigma_j expressions
             r_div_q_gamma = r_div_q*gammaList[s]
+            
             # Sum over all i, store in array for stage s/each j
             r_div_q_gamma_arr[s] = np.sum(r_div_q_gamma,axis=0)
             
             # Tile these quantities so that dimensions match for multiplication
             r_div_q_gamma_tile = np.repeat(np.expand_dims(r_div_q_gamma,axis=-1),X.shape[2],axis=-1)
             x_tile = np.repeat(np.expand_dims(X[s,:,:],axis=1),params.k(),axis=1)
+            
             # Compute numerator of expression for mu_j, sum over all i, store in array for stage s/each j
             mu_arr[s] = np.sum(r_div_q_gamma_tile*x_tile,axis=0)
             
@@ -676,8 +612,10 @@ class CEM:
     
             # Tile mu for each sample of stage s
             mu_tile = np.tile(mu,(X.shape[1],1,1))
+            
             # Tile the samples of stage s for each component mean mu_j
             x_tile = np.repeat(np.expand_dims(X[s,:,:],axis=1),params.k(),axis=1)
+            
             # Compute the vector X_i-mu_j
             diff = x_tile-mu_tile
             
@@ -689,8 +627,9 @@ class CEM:
                     covar[i,j,:,:] = covarMat
             
             # Compute the denominator of expression for sigma_j
-            r_div_q = np.tile(r_xList[s]/densityList[s],(1,params.k()))
+            r_div_q = self.Hx_WxList[s]
             r_div_q_gamma = r_div_q*gammaList[s]
+            
             # Tile the denominator 
             r_div_q_gamma_tile = np.tile(np.expand_dims(r_div_q_gamma,axis=(-1,-2)),(1,1,X.shape[2],X.shape[2]))
         
@@ -737,13 +676,12 @@ class CEM:
             The new updated params.
     
         """
-        i = 0
-        delta = np.inf
-        
-        ce = self.c_bar(self.X,self.rList,self.q,self.log_q,self.paramsList,params)
+        i = 0        
+        converged  = False
+        ce_old = np.inf
         
         # Loop until EM converges
-        while delta >= eps*np.abs(ce) and i < maxiter:
+        while not converged and i < maxiter:
             
             # Perform a single EM iteration
             alpha,mu,sigma = self.emIteration(params)
@@ -770,14 +708,12 @@ class CEM:
             # Update the params using the result of single EM iteration
             params.update(alpha,mu,sigma)
             
-            # Compute c_bar for the updated params
-            _ce = self.c_bar(self.X,self.rList,self.q,self.log_q,self.paramsList,params)
+            # Compute cross-entropy for the updated params
+            ce = self.c_bar(params)
             
             # Compute the change in cross-entropy
-            delta = ce-_ce
-            
-            ce = _ce
-            
+            converged = (ce_old - ce) < eps*np.abs(ce_old)
+            ce_old = ce
             i += 1
 
         if not retCE:
@@ -1094,7 +1030,7 @@ class CEM:
         
                     # Compute CIC for the best params
                     try:
-                        cic = self.cic(self.X,self.rList,self.q,self.log_q,self.paramsList,bestParams)
+                        cic = self.cic(bestParams)
                     except Exception as e:
                         if self.log:
                             print('Error computing CIC during runStage!')
@@ -1122,7 +1058,7 @@ class CEM:
     
                 # Compute CIC for the best params
                 try:
-                    cic = self.cic(self.X,self.rList,self.q,self.log_q,self.paramsList,bestParams)
+                    cic = self.cic(bestParams)
                 except Exception as e:
                     if self.log:
                         logging.error('Error while computing CIC: {}'.format(str(e)))
@@ -1144,8 +1080,8 @@ class CEM:
             
             # Increment k 
             k = nextk
-            runStageCounter += 1
-            #print('iterations in this stage: {}'.format(runStageCounter))
+            # runStageCounter += 1
+            # print('iterations in this stage: {}'.format(runStageCounter))
         
         # Verify that we have computed the CIC for each param
         try:
