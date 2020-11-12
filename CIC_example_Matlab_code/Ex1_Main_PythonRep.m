@@ -1,6 +1,6 @@
 %% Setup
 ifsave = 1; %save the worskpace if 1.
-n_exp = 100; %50;
+n_exp = 2; %50;
 randseed = 42;
 rng(randseed);
 

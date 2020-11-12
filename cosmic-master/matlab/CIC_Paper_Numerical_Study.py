@@ -140,10 +140,10 @@ def runReplicate(seed):
     procedure.run()
     
     # Estimate the failure probability
-    rho = procedure.rho(procedure.X[1:,:,:],
-                        procedure.rList[1:],
+    rho = procedure.rho(procedure.X,
+                        procedure.rList,
                         procedure.q,
-                        procedure.paramsList[1:])
+                        procedure.paramsList)
     
     print('Done with replicate!')
     
@@ -153,7 +153,7 @@ if __name__ == '__main__':
     
     np.random.seed(420)
     
-    numReps = 500
+    numReps = 50
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
@@ -171,7 +171,8 @@ if __name__ == '__main__':
     #     rhoList.append(rho)
     
     rhoList = [item[0] for item in resultList]
-    toCsvList = [[rho,] for rho in rhoList]
+    #toCsvList = [[rho,] for rho in rhoList]
+    toCsvList = [[item[0],item[1].paramsList[-1].k()] for item in resultList]
     
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
@@ -179,7 +180,7 @@ if __name__ == '__main__':
     with open('results.csv','w') as f:
         writer = csv.writer(f)
         # Header row
-        writer.writerow(['rho',])
+        writer.writerow(['rho','final_k'])
         writer.writerows(toCsvList)
     
 

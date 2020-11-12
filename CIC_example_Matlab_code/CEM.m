@@ -32,13 +32,14 @@ for t = 1:n_steps
     % EM Algorithm    
     [GMM{t}, best_models_by_k{t}, CIC{t}, nCEs_for_best_models{t}, k_min] = EM_Algo( X, Hx_Wx, current_est, k_min ); 
     % Sampling from the last GMM
-    X_new = random(GMM{t},n_per_step);
+    X_new = random(GMM{t},n_per_step);hw
 
     % Evaluate the simulation output, H(x), and the likelihood ratio W(x).
     hw = pdf(GMM{t},X_new);
     X = [X; X_new]; Hx_new = H(X_new); Wx_new = fu(X_new)./hw; %#ok<AGROW>
     Hx = [Hx; Hx_new];  Wx = [Wx; Wx_new]; %#ok<AGROW>
     Hx_Wx = [Hx_Wx; Hx_new.*Wx_new]; %#ok<AGROW>
+    disp(size(Hx_Wx));
     % Current POE estimate
     current_est = mean(Hx_Wx((n_per_initstep+1):end)); 
 end

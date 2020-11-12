@@ -1,21 +1,18 @@
-function [ nCE ] = negCE(X, Hx_Wx, GM)
-%Return negative cross entropy estimate  
-    n_X = size(X,1);  n_comp = GM.NComponents; %in matlab 2014a;  GM.NumComponents in matlab 2015a.
-    
+function llh = logdensity(X, GM)
+%LOGMVNPDF Summary of this function goes here
+%   Detailed explanation goes here
+    n_X = size(X,1);  n_comp = GM.NComponents;
     logmvnpdf = zeros(n_X,n_comp);
     for k = 1:n_comp
         logmvnpdf(:,k) = log_mvnpdf(X,GM.mu(k,:),GM.Sigma(:,:,k));
     end
     
-    if sum(isnan(logmvnpdf(1,:)))~=0, nCE = NaN;  %If any covariance is not PD, then return NaN.
+    if sum(isnan(logmvnpdf(1,:)))~=0, llh = NaN;  %If any covariance is not PD, then return NaN.
     else
         log_pdf_proportion = bsxfun(@plus,logmvnpdf,log(GM.PComponents));  %log (mvn pdf for k * weight for k)   %GM.PComponents in 2014a ; GM.ComponentProportion in matlab 2015a
-        llh = LogSumExp(log_pdf_proportion,2); %log likelihood for each x_i, i = 1, ..., n
-        %CHECK:  [~,nlogl] = posterior(GM,X); nllh = nlogl/n_X;  nllh== 83.0766;   -sum(llh./n_X) + nllh  == 1.4211e-13
-        nCE = mean(llh.*Hx_Wx);
+        llh = LogSumExp(log_pdf_proportion,2);
     end
 end
-
 
 function logmvnpdf = log_mvnpdf(X, mu, sig) 
 %Reference codes:
@@ -34,7 +31,6 @@ function logmvnpdf = log_mvnpdf(X, mu, sig)
     end
 
 end
-
 
 function llh = LogSumExp(x, dim)
 % Compute log(sum(exp(x),dim)) while avoiding numerical underflow.

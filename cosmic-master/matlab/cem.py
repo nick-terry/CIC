@@ -16,6 +16,7 @@ import numpy as np
 # Want to raise an exception if divide by zero
 np.seterr(divide='raise')
 import scipy.stats as stat
+import scipy.special as spc
 import pickle as pck
 import datetime as dttm
 import os
@@ -117,7 +118,7 @@ class CEM:
         if 'jitter' in kwargs:
             self.jitter = kwargs['jitter']
         else:
-            self.jitter = 1e-200
+            self.jitter = 1e-300
           
         if 'numIters' in kwargs:
             self.numIters = kwargs['numIters']
@@ -131,6 +132,11 @@ class CEM:
             
         if 'seed' in kwargs:
             np.random.seed(kwargs['seed'])
+            
+        if 'allowSingular'in kwargs:
+            self.allowSingular = kwargs['allowSingular']
+        else:
+            self.allowSingular = False
             
         if 'verbose' in kwargs:
             self.verbose = kwargs['verbose']
@@ -164,7 +170,7 @@ class CEM:
         vectorized = lambda x : np.apply_along_axis(densityFn, axis=0, arr=x)
         return vectorized
     
-    def entropy(self,x,r_x,q,params,newParams):
+    def entropy(self,x,r_x,q,log_q,params,newParams):
         """
         Compute the entropy of X defined in equation 3.10 of the paper in a
         vectorized manner.
@@ -195,13 +201,13 @@ class CEM:
         """
         
         q_theta = q(params)
-        q_theta_new = q(newParams)
+        log_q_theta_new = log_q(newParams)
         
-        _entr = r_x * np.log(q_theta_new(x))/q_theta(x)
+        _entr = r_x * log_q_theta_new(x)/q_theta(x)
         
         return _entr
     
-    def c_bar(self,X,rList,q,paramsList,newParams):
+    def c_bar(self,X,rList,q,log_q,paramsList,newParams):
         """
         Estimate the cross-entropy from the importance sampling
         distribution defined by eta, using the estimator from equation 3.7 of
@@ -218,6 +224,9 @@ class CEM:
             evaluated at the sampled points X, for each stage.
         q : function
             Given parameters, returns a density function from
+            the posited parametric family.
+        log_q : function
+            Given parameters, returns a log density function from
             the posited parametric family.
         paramsList : list
             Parameters of the approximation of the target distribution Q^* at each stage.
@@ -237,7 +246,7 @@ class CEM:
             r_x = rList[s]
             oldParams = paramsList[s]
             
-            cumulative_c_bar += np.sum(self.entropy(x,r_x,q,oldParams,newParams))
+            cumulative_c_bar += np.sum(self.entropy(x,r_x,q,log_q,oldParams,newParams))
         
         _c_bar = -1/X.shape[0]/X.shape[1] * cumulative_c_bar
         return _c_bar
@@ -287,7 +296,7 @@ class CEM:
             
         return _rho
     
-    def cic(self,X,rList,q,paramsList,params):
+    def cic(self,X,rList,q,log_q,paramsList,params):
         """
         Compute the cross-entropy information criterion (CIC) defined in equation 3.13 
         of the paper. This is a more general implementation which does not specify
@@ -304,6 +313,9 @@ class CEM:
             evaluated at the sampled points X, for each stage.
         q : function
             Given parameters, returns a density function from
+            the posited parametric family.
+        log_q : function
+            Given parameters, returns a log density function from
             the posited parametric family.
         paramsList : list
             Parameters of the approximation of the target distribution Q^* at each previous stage.
@@ -324,15 +336,15 @@ class CEM:
         
         # If we are in stage 0
         if X.shape[0]==1:
-            _cic = self.c_bar(X,rList,q,paramsList,params)\
+            _cic = self.c_bar(X,rList,q,log_q,paramsList,params)\
                 + self.rho(X,rList,q,paramsList+[params,])*d/X.shape[0]/X.shape[1]
         # Otherwise, exclude data from stage 0
         else:
             _X = X[1:,:,:]
             _paramsList = paramsList[1:]
             _rList = rList[1:]
-            _cic = self.c_bar(_X,_rList,q,_paramsList,params)\
-                + self.rho(_X,_rList,q,_paramsList+[params,])*d/X.shape[0]/X.shape[1]
+            _cic = self.c_bar(X,rList,q,log_q,paramsList,params)\
+                + self.rho(_X,_rList,q,_paramsList+[params,])*d/(X.shape[0]-1)/X.shape[1]
         return _cic
     
     def r(self,x):
@@ -375,7 +387,7 @@ class CEM:
                 densities = np.zeros(shape=(x.shape[0],params.k()))
                 for j in range(params.k()):
                     try:
-                        densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=True)
+                        densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
                     except Exception as e:
                         print(sigma[j,:])
                         raise(e)
@@ -396,13 +408,72 @@ class CEM:
                     # Compute density at each observation
                     densities = np.zeros(shape=(x.shape[0],params.k()))
                     for j in range(params.k()):
-                        densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=True)
+                        densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
                     
                     densityList.append(np.expand_dims(np.sum(_alpha*densities,axis=1),axis=1) + self.jitter)
                 
                 return np.concatenate(densityList)
         
         return _q
+    
+    def log_q(self,params):
+        """
+        Get a function for computing the density of the current 
+        parametric estimate of the importance sampling distribution.
+    
+        Parameters
+        ----------
+        params : GMMParams
+            parameters of the parametric estimate
+    
+        Returns
+        -------
+        q : function
+            The density function.
+    
+        """
+        
+        alpha,mu,sigma = params.get()
+        
+        def _log_q(X):
+            
+            if len(X.shape)==2:
+                
+                x = X
+                _alpha = np.tile(alpha,(x.shape[0],1))
+                
+                # Compute density at each observation
+                logdensities = np.zeros(shape=(x.shape[0],params.k()))
+                for j in range(params.k()):
+                    try:
+                        logdensities[:,j] = stat.multivariate_normal.logpdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
+                    except Exception as e:
+                        print(sigma[j,:])
+                        raise(e)
+                
+                logdensity = np.expand_dims(spc.logsumexp(np.log(_alpha)+logdensities,axis=1),axis=1) + self.allowSingular
+                
+                return logdensity
+            
+            if len(X.shape)==3:
+                
+                logdensityList = []
+                
+                for s in range(X.shape[0]):
+                    
+                    x = X[s,:,:]
+                    _alpha = np.tile(alpha,(x.shape[0],1))
+                    
+                    # Compute density at each observation
+                    logdensities = np.zeros(shape=(x.shape[0],params.k()))
+                    for j in range(params.k()):
+                        logdensities[:,j] = stat.multivariate_normal.logpdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
+                    
+                    logdensityList.append(np.expand_dims(spc.logsumexp(np.log(_alpha)+logdensities,axis=1),axis=1) + self.jitter)
+                
+                return np.concatenate(logdensityList)
+        
+        return _log_q
     
     def generateX(self,params,num=1):
         """
@@ -440,7 +511,7 @@ class CEM:
             _sigma = sigma[mixtureComponent,:,:]
             x[i,:] = np.random.RandomState().multivariate_normal(_mu,_sigma)
         
-        return x
+        return x.astype(np.longdouble)
     
     def expectation(self,x,q,params):
         """
@@ -465,30 +536,42 @@ class CEM:
         _alpha = np.tile(alpha,(x.shape[0],1))
         
         # Compute density at each observation
-        densities = np.zeros(shape=(x.shape[0],params.k()))
-        for j in range(params.k()):
-            try:
-                densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=True)
-            except Exception as e:
-                print(sigma[j,:])
-                raise(e)
+        # densities = np.zeros(shape=(x.shape[0],params.k()))
+        # for j in range(params.k()):
+        #     try:
+        #         densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
+        #     except Exception as e:
+        #         print(sigma[j,:])
+        #         raise(e)
         
-        # Replace values less than 1e-200 with jitter value to prevent div by zero error, overflow
-        densities[densities<self.jitter] = self.jitter
+        # # Replace values less than 1e-200 with jitter value to prevent div by zero error, overflow
+        # densities[densities<self.jitter] = self.jitter
+        # alpha_q = _alpha*densities
+        log_q_theta = self.log_q(params)
+        log_alpha_q =  log_q_theta(x)
+
         
-        alpha_q = _alpha*densities
         # Add jitter to density to prevent div by zero error
-        density = np.expand_dims(np.sum(alpha_q,axis=1),axis=1) #+ self.jitter
-        _density = np.tile(density,(1,params.k()))
+        log_density = np.expand_dims(spc.logsumexp(log_alpha_q,axis=1),axis=1) + self.jitter
+        _log_density = np.tile(log_density,(1,params.k()))
         
-        gamma = alpha_q/_density
+        gamma = np.exp(log_alpha_q - _log_density)
         
         # For each i (observation), summing gamma over j should give 1
         try:
             err = np.abs(np.sum(gamma,axis=1)-1)
             assert(np.all(err<1e-3))
         except Exception as e:
+            print(params.k())
             print('Gammas don\'t sum to one for at least one observation!')
+            raise e
+        
+        density = np.exp(log_density)        
+        
+        try:
+            assert np.all(density>0)
+        except Exception as e:
+            print('Densities of zero!')
             raise e
         
         return gamma,density
@@ -654,7 +737,7 @@ class CEM:
         i = 0
         delta = np.inf
         
-        ce = self.c_bar(self.X,self.rList,self.q,self.paramsList,params)
+        ce = self.c_bar(self.X,self.rList,self.q,self.log_q,self.paramsList,params)
         
         # Loop until EM converges
         while delta >= eps*np.abs(ce) and i < maxiter:
@@ -685,7 +768,7 @@ class CEM:
             params.update(alpha,mu,sigma)
             
             # Compute c_bar for the updated params
-            _ce = self.c_bar(self.X,self.rList,self.q,self.paramsList,params)
+            _ce = self.c_bar(self.X,self.rList,self.q,self.log_q,self.paramsList,params)
             
             # Compute the change in cross-entropy
             delta = ce-_ce
@@ -787,7 +870,7 @@ class CEM:
             # print('number of event occurences: {}'.format(len(posIndStage)))
             
             # Get half of init params by sampling from the MVG
-            numMVGParams = numInitParams//2
+            numMVGParams = 0 #numInitParams//2
             
             try:
                 assert(dim is not None)
@@ -866,7 +949,7 @@ class CEM:
         return initParamsList
      
     
-    def runStage(self,s,params,kMin,kMax=40,numInitParams=10):
+    def runStage(self,s,params,kMin,kMax=30,numInitParams=10):
         """
         Run a single stage of the CEM procedure for each value of k considered.
 
@@ -890,6 +973,12 @@ class CEM:
         cicMA : list
             The moving average of the cicList
         """
+        
+        # Determine kMax from number of samples and computing num free params
+        if s > 0:
+            max_free_param = np.floor(self.X.shape[1]*self.X.shape[0] / 10) #maximum number of free parameters we would like to allow.  If the divisor is 10, it means we expect that each component has 10 observations on average. 
+            kMax = min(kMax,np.floor((max_free_param+1)/(self.X.shape[2] + (self.X.shape[2]*(self.X.shape[2]+1))/2 + 1)))
+        
         # Window size for computing CIC moving average
         windowSize=4
         
@@ -922,6 +1011,7 @@ class CEM:
         kTooBig = False
         maIncr = False
         resetCounter = 0
+        runStageCounter = 0
     
         # Keep increasing k until we abort more than 50% of EM trials
         while not kTooBig and not maIncr and k <= kMax:
@@ -988,7 +1078,7 @@ class CEM:
         
                     # Compute CIC for the best params
                     try:
-                        cic = self.cic(self.X,self.rList,self.q,self.paramsList,bestParams)
+                        cic = self.cic(self.X,self.rList,self.q,self.log_q,self.paramsList,bestParams)
                     except Exception as e:
                         if self.log:
                             print('Error computing CIC during runStage!')
@@ -1016,7 +1106,7 @@ class CEM:
     
                 # Compute CIC for the best params
                 try:
-                    cic = self.cic(self.X,self.rList,self.q,self.paramsList,bestParams)
+                    cic = self.cic(self.X,self.rList,self.q,self.log_q,self.paramsList,bestParams)
                 except Exception as e:
                     if self.log:
                         logging.error('Error while computing CIC: {}'.format(str(e)))
@@ -1038,6 +1128,8 @@ class CEM:
             
             # Increment k 
             k = nextk
+            runStageCounter += 1
+            #print('iterations in this stage: {}'.format(runStageCounter))
         
         # Verify that we have computed the CIC for each param
         try:

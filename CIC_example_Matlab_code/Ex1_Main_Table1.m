@@ -1,7 +1,7 @@
 %% Setup
 ifsave = 1; %save the worskpace if 1.
-n_exp = 100; %50;
-randseed = 100;
+n_exp = 50; %50;
+randseed = 42;
 rng(randseed);
 
 %% Eq (19) and setup in p. 39 LB of KS(2013)
