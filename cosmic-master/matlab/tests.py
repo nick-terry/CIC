@@ -96,11 +96,15 @@ def npToMAT(array,collapse=True):
         arrList = [list(_array[i,:]) for i in range(_array.shape[0])]
         arrM = matlab.double(arrList)
     else:
-        _array = array
+        _array = array.squeeze()
  
         arrM = matlab.double(_array.tolist())
     
-    assert(np.all((_array-arrM)==0))
+    try:
+        assert(np.all((_array-arrM)==0))
+    except Exception as e:
+        print('Conversion to matlab array failed!')
+        raise e
     
     return arrM
 
@@ -149,7 +153,13 @@ def gmmParamsToMatlab(params,eng,epsilon=1e-10):
     
     eng.workspace['gmm'] = gmm
     muTest = np.array(eng.eval('gmm.mu'))
-    sigmaTest = np.array(eng.eval('gmm.Sigma')).swapaxes(1,2).swapaxes(0,1)
+    sigmaTest = np.array(eng.eval('gmm.Sigma'))
+    # If there is more than one GMM component, need to rearrange axes
+    if len(sigmaTest.shape)>2:
+        sigmaTest = sigmaTest.swapaxes(1,2).swapaxes(0,1)
+    # Otherwise, just expand 0 axis
+    else:
+        sigmaTest = np.expand_dims(sigmaTest,0)
     alphaTest = np.array(eng.eval('gmm.PComponents'))
     
     assert np.all(mu==muTest)
@@ -245,7 +255,7 @@ def rhoTest(X,proc,params,eng,epsilon):
     eng.workspace['Wx'] = eng.eval('fu(XM)./hw')
     eng.workspace['Hx_Wx'] = npToMAT(np.array(eng.workspace['Wx'])*h(X[0,:,:]))
     
-    matlabRes = eng.eval('mean(Hx_Wx(1001:end))')
+    matlabRes = eng.eval('mean(Hx_Wx)')
     pythonRes = proc.rho(proc.X,proc.rList,proc.q,proc.paramsList)
     
     return np.abs(matlabRes-pythonRes)<epsilon

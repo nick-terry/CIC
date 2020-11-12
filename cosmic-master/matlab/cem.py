@@ -14,7 +14,7 @@ Implementation of cross-entropy information criterion method from the paper
 '''
 import numpy as np
 # Want to raise an exception if divide by zero
-np.seterr(divide='raise')
+# np.seterr(divide='raise')
 import scipy.stats as stat
 import scipy.special as spc
 import pickle as pck
@@ -102,10 +102,12 @@ class CEM:
         self.paramsList = []
         self.hList = []
         self.rList = []
+        self.Hx_WxList = []
         
         # Store some historical data as procedure is executed
         self.bestParamsLists = []
         self.cicLists = []
+        
         
         # Some important constants which can be changed
         # Set a threshold beyond which we consider r_x to be zero to avoid div by zero
@@ -148,6 +150,8 @@ class CEM:
             self.log = kwargs['log']
         else:
             self.log = True
+            
+        self.cicArray = np.zeros(shape=(self.numIters,1))
             
     def getVectorizedDensity(self,densityFn):
         """
@@ -533,22 +537,20 @@ class CEM:
         """
         # Tile and reshape arrays for vectorized computation
         alpha,mu,sigma = params.get()
-        _alpha = np.tile(alpha,(x.shape[0],1))
+        _log_alpha = np.tile(np.log(alpha),(x.shape[0],1))
         
         # Compute density at each observation
-        # densities = np.zeros(shape=(x.shape[0],params.k()))
-        # for j in range(params.k()):
-        #     try:
-        #         densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
-        #     except Exception as e:
-        #         print(sigma[j,:])
-        #         raise(e)
+        log_densities = np.zeros(shape=(x.shape[0],params.k()))
+        for j in range(params.k()):
+            try:
+                log_densities[:,j] = stat.multivariate_normal.logpdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
+            except Exception as e:
+                print(sigma[j,:])
+                raise(e)
         
         # # Replace values less than 1e-200 with jitter value to prevent div by zero error, overflow
-        # densities[densities<self.jitter] = self.jitter
-        # alpha_q = _alpha*densities
-        log_q_theta = self.log_q(params)
-        log_alpha_q =  log_q_theta(x)
+        # log_densities[log_densities<self.jitter] = self.jitter
+        log_alpha_q = _log_alpha + log_densities
 
         
         # Add jitter to density to prevent div by zero error
@@ -617,11 +619,12 @@ class CEM:
             
             # Compute the denominator of alpha_j expression
             # An overflow may occur here...
-            r_div_q = np.tile(r_xList[s]/densityList[s],(1,params.k()))
+            # r_div_q = np.tile(r_xList[s]/densityList[s],(1,params.k()))
+            r_div_q = self.Hx_WxList[s]
             
             # # If we get a divide by zero/overflow
-            # if np.any(r_div_q==np.inf):
-            #     print(densityList[s][r_div_q[:,:1]==np.inf])
+            if np.any(r_div_q==np.inf):
+                print(densityList[s][r_div_q[:,:1]==np.inf])
             
             # Sum over all i, store in array for stage s
             r_div_q_arr[s] = np.sum(r_div_q,axis=0)[0]
@@ -992,15 +995,28 @@ class CEM:
             _x = np.expand_dims(x,axis=0)
             self.X = np.concatenate([self.X,_x],axis=0)
         
-        # Run simulation and compute likelihood
+        # Run simulation and compute likelihood ratio
         try:
-            r_x = self.r(x)
+            # r_x = self.r(x)
+            
+            # Get simulation result
+            Hx = self.h(x)
+            # Get likelihood ratio
+            q_theta = self.q(params)
+            px = self.p(x)
+            Wx = px/q_theta(x)
+            
+            r_x = Hx * px
+            Hx_Wx = Hx * Wx
+            
         except Exception as e:
             if self.log:
                 logging.error('Error during r(x): {}'.format(str(e)))
             raise e
             
         self.rList.append(r_x)
+        self.hList.append(Hx)
+        self.Hx_WxList.append(Hx_Wx)
         
         bestParamsList = []
         cicList = []
