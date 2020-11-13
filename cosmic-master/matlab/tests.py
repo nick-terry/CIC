@@ -178,7 +178,7 @@ def Hx_WxTest(X,proc,params,eng,epsilon):
     # Compute the other stuff needed  w/ python
     q = proc.q(params)
     # proc.r can only operate on 2D slices
-    r = proc.r(X[0,:,:])
+    r = proc.r(X)
     qVal = q(X)
     Hx_Wx = (r/qVal).squeeze()
     
@@ -187,7 +187,7 @@ def Hx_WxTest(X,proc,params,eng,epsilon):
     eng.workspace['fu'] = eng.eval('@(x) mvnpdf(x,zeros(1,2),eye(2));')
     eng.workspace['hw'] = eng.pdf(gmm,XM)
     eng.workspace['Wx'] = eng.eval('fu(XM)./hw')
-    Hx_WxM = npToMAT(np.array(eng.workspace['Wx'])*h(X[0,:,:]))
+    Hx_WxM = npToMAT(np.array(eng.workspace['Wx'])*h(X))
     Hx_WxM = np.array(Hx_WxM).squeeze()
     
     return np.all(np.abs(Hx_Wx-Hx_WxM)<epsilon)
@@ -217,7 +217,7 @@ def negCETest(X,proc,params,eng,epsilon):
     # Compute the other stuff needed  w/ python
     q = proc.q(params)
     # proc.r can only operate on 2D slices
-    r = proc.r(X[0,:,:])
+    r = proc.r(X)
     qVal = q(X)
     Hx_Wx = r/qVal
     
@@ -226,10 +226,10 @@ def negCETest(X,proc,params,eng,epsilon):
     eng.workspace['fu'] = eng.eval('@(x) mvnpdf(x,zeros(1,2),eye(2));')
     eng.workspace['hw'] = eng.pdf(gmm,XM)
     eng.workspace['Wx'] = eng.eval('fu(XM)./hw')
-    Hx_WxM = npToMAT(np.array(eng.workspace['Wx'])*h(X[0,:,:]))
+    Hx_WxM = npToMAT(np.array(eng.workspace['Wx'])*h(X))
     
     matlabRes = eng.negCE(XM,Hx_WxM,gmm)
-    proc.X = X
+    proc.X = [X,]
     proc.Hx_WxList.append(Hx_Wx)
     pythonRes = -proc.c_bar(params)
     
@@ -245,7 +245,7 @@ def rhoTest(X,proc,params,eng,epsilon):
     
     # Convert some data to MATLAB format
     
-    XM = npToMAT(X)
+    XM = npToMAT(np.concatenate(X,axis=0))
     
     # Compute the other stuff needed  w/ python
     q = proc.q(params)
@@ -277,7 +277,6 @@ if __name__=='__main__':
     proc = getCEM(seed)
     
     X = proc.generateX(proc.initParams,num=1000)
-    X = X.reshape((1,X.shape[0],X.shape[1]))
     
     # Check that MVG/GMM density is computed correctly
     assert mvgDensityTest(X, proc, eng, epsilon)

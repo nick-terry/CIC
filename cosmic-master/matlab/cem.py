@@ -173,43 +173,6 @@ class CEM:
         vectorized = lambda x : np.apply_along_axis(densityFn, axis=0, arr=x)
         return vectorized
     
-    def entropy(self,x,r_x,q,log_q,params,newParams):
-        """
-        Compute the entropy of X defined in equation 3.10 of the paper in a
-        vectorized manner.
-    
-        Parameters
-        ----------
-        x : numpy array
-            The samples draw from the importance sampling distribution. First
-            dimension is number of samples, second dimension is the dimension of
-            the space from which each observation is drawn (i.e. X \in R^3).
-        r_x : numpy array
-            The non-negative function r to which the target density is proportional,
-            evaluated at the sampled points X. Should have the same shape as X.
-        q : function
-            Given parameters, returns a density function from
-            the posited parametric family.
-        params : GMMParams
-            Parameters of the previous approximation.
-        newParams : GMMParams
-            Parameters of the new approximation.
-    
-        Returns
-        -------
-        _h : numpy array
-            The entropy of each observation in X w.r.t. the densities given by
-            q_eta, q_theta.
-    
-        """
-        
-        q_theta = q(params)
-        log_q_theta_new = log_q(newParams)
-        
-        _entr = r_x * log_q_theta_new(x)/q_theta(x)
-        
-        return _entr
-    
     def c_bar(self,params):
         """
         Estimate the cross-entropy from the importance sampling
@@ -332,41 +295,22 @@ class CEM:
         
         def _q(X):
             
-            if len(X.shape)==2:
+            # Concatenate samples from each stage to a single numpy array
+            if type(X) is list:
+                _X = np.concatenate(X,axis=0)
+            else:
+                _X = X
                 
-                x = X
-                _alpha = np.tile(alpha,(x.shape[0],1))
-                
-                # Compute density at each observation
-                densities = np.zeros(shape=(x.shape[0],params.k()))
-                for j in range(params.k()):
-                    try:
-                        densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
-                    except Exception as e:
-                        print(sigma[j,:])
-                        raise(e)
-                
-                density = np.expand_dims(np.sum(_alpha*densities,axis=1),axis=1) + self.jitter
-                
-                return density
+            _alpha = np.tile(alpha,(X.shape[0],1))
             
-            if len(X.shape)==3:
-                
-                densityList = []
-                
-                for s in range(X.shape[0]):
-                    
-                    x = X[s,:,:]
-                    _alpha = np.tile(alpha,(x.shape[0],1))
-                    
-                    # Compute density at each observation
-                    densities = np.zeros(shape=(x.shape[0],params.k()))
-                    for j in range(params.k()):
-                        densities[:,j] = stat.multivariate_normal.pdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
-                    
-                    densityList.append(np.expand_dims(np.sum(_alpha*densities,axis=1),axis=1) + self.jitter)
-                
-                return np.concatenate(densityList)
+            # Compute density at each observation
+            densities = np.zeros(shape=(_X.shape[0],params.k()))
+            for j in range(params.k()):
+                densities[:,j] = stat.multivariate_normal.pdf(_X,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
+            
+            densities = np.expand_dims(np.sum(_alpha*densities,axis=1),axis=1)
+            
+            return densities
         
         return _q
     
@@ -390,42 +334,22 @@ class CEM:
         alpha,mu,sigma = params.get()
         
         def _log_q(X):
+        
+            if type(X) is list:
+                _X = np.concatenate(X,axis=0)
+            else:
+                _X = X
+                
+            _alpha = np.tile(alpha,(X.shape[0],1))
             
-            if len(X.shape)==2:
-                
-                x = X
-                _alpha = np.tile(alpha,(x.shape[0],1))
-                
-                # Compute density at each observation
-                logdensities = np.zeros(shape=(x.shape[0],params.k()))
-                for j in range(params.k()):
-                    try:
-                        logdensities[:,j] = stat.multivariate_normal.logpdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
-                    except Exception as e:
-                        print(sigma[j,:])
-                        raise(e)
-                
-                logdensity = np.expand_dims(spc.logsumexp(np.log(_alpha)+logdensities,axis=1),axis=1) + self.allowSingular
-                
-                return logdensity
+            # Compute density at each observation
+            log_densities = np.zeros(shape=(_X.shape[0],params.k()))
+            for j in range(params.k()):
+                log_densities[:,j] = stat.multivariate_normal.logpdf(_X,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
             
-            if len(X.shape)==3:
-                
-                logdensityList = []
-                
-                for s in range(X.shape[0]):
-                    
-                    x = X[s,:,:]
-                    _alpha = np.tile(alpha,(x.shape[0],1))
-                    
-                    # Compute density at each observation
-                    logdensities = np.zeros(shape=(x.shape[0],params.k()))
-                    for j in range(params.k()):
-                        logdensities[:,j] = stat.multivariate_normal.logpdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
-                    
-                    logdensityList.append(np.expand_dims(spc.logsumexp(np.log(_alpha)+logdensities,axis=1),axis=1) + self.jitter)
-                
-                return np.concatenate(logdensityList)
+            log_densities = np.expand_dims(spc.logsumexp(np.log(_alpha)+log_densities,axis=1),axis=1)
+            
+            return log_densities
         
         return _log_q
     
@@ -497,9 +421,7 @@ class CEM:
             except Exception as e:
                 print(sigma[j,:])
                 raise(e)
-        
-        # # Replace values less than 1e-200 with jitter value to prevent div by zero error, overflow
-        # log_densities[log_densities<self.jitter] = self.jitter
+                
         log_alpha_q = _log_alpha + log_densities
   
         # Add jitter to density to prevent div by zero error
@@ -539,23 +461,23 @@ class CEM:
         covar_regularization = 10**-6 #Add ridge to covar matrix to prevent numerical instability
         
         # To make this code (slightly) more readable
-        X,r_xList,q = self.X,self.rList,self.q
+        X,q = self.X,self.q
         
         gammaList = []
         # densityList = []
     
-        for s in range(X.shape[0]):
+        for s in range(len(X)):
             
-            x = X[s,:,:]
+            x = X[s]
             gamma = self.expectation(x,q,params)
             
             gammaList.append(gamma)
         
-        r_div_q_arr = np.zeros(shape=(X.shape[0],1))
-        r_div_q_gamma_arr = np.zeros(shape=(X.shape[0],params.k()))
-        mu_arr  = np.zeros(shape=(X.shape[0],params.k(),X.shape[2]))
+        r_div_q_arr = np.zeros(shape=(len(X),1))
+        r_div_q_gamma_arr = np.zeros(shape=(len(X),params.k()))
+        mu_arr  = np.zeros(shape=(len(X),params.k(),X[0].shape[1]))
         
-        for s in range(X.shape[0]):
+        for s in range(len(X)):
             
             # Compute the denominator of alpha_j expression
             r_div_q = self.Hx_WxList[s]
@@ -570,8 +492,8 @@ class CEM:
             r_div_q_gamma_arr[s] = np.sum(r_div_q_gamma,axis=0)
             
             # Tile these quantities so that dimensions match for multiplication
-            r_div_q_gamma_tile = np.repeat(np.expand_dims(r_div_q_gamma,axis=-1),X.shape[2],axis=-1)
-            x_tile = np.repeat(np.expand_dims(X[s,:,:],axis=1),params.k(),axis=1)
+            r_div_q_gamma_tile = np.repeat(np.expand_dims(r_div_q_gamma,axis=-1),X[s].shape[1],axis=-1)
+            x_tile = np.repeat(np.expand_dims(X[s],axis=1),params.k(),axis=1)
             
             # Compute numerator of expression for mu_j, sum over all i, store in array for stage s/each j
             mu_arr[s] = np.sum(r_div_q_gamma_tile*x_tile,axis=0)
@@ -596,7 +518,7 @@ class CEM:
             raise e
             
         mu = np.sum(mu_arr,axis=0)/np.repeat(np.expand_dims(np.sum(r_div_q_gamma_arr,axis=0),axis=1),
-                                             X.shape[2],axis=1)
+                                             X[0].shape[1],axis=1)
         
         # Check that there is no inf/nan values
         try:
@@ -607,21 +529,21 @@ class CEM:
             raise e
             
         
-        sigma_arr = np.zeros(shape=(X.shape[0],params.k(),X.shape[2],X.shape[2]))
-        for s in range(X.shape[0]):
+        sigma_arr = np.zeros(shape=(len(X),params.k(),X[0].shape[1],X[0].shape[1]))
+        for s in range(len(X)):
     
             # Tile mu for each sample of stage s
-            mu_tile = np.tile(mu,(X.shape[1],1,1))
+            mu_tile = np.tile(mu,(X[s].shape[0],1,1))
             
             # Tile the samples of stage s for each component mean mu_j
-            x_tile = np.repeat(np.expand_dims(X[s,:,:],axis=1),params.k(),axis=1)
+            x_tile = np.repeat(np.expand_dims(X[s],axis=1),params.k(),axis=1)
             
             # Compute the vector X_i-mu_j
             diff = x_tile-mu_tile
             
             # Compute covar matrices w/ outer product (X_i-mu_j)(X_i-mu_j)^T
-            covar = np.zeros(shape=(X.shape[1],params.k(),X.shape[2],X.shape[2]))
-            for i in range(X.shape[1]):
+            covar = np.zeros(shape=(X[s].shape[0],params.k(),X[s].shape[1],X[s].shape[1]))
+            for i in range(X[s].shape[0]):
                 for j in range(params.k()):
                     covarMat = np.outer(diff[i,j,:],diff[i,j,:])
                     covar[i,j,:,:] = covarMat
@@ -631,17 +553,17 @@ class CEM:
             r_div_q_gamma = r_div_q*gammaList[s]
             
             # Tile the denominator 
-            r_div_q_gamma_tile = np.tile(np.expand_dims(r_div_q_gamma,axis=(-1,-2)),(1,1,X.shape[2],X.shape[2]))
+            r_div_q_gamma_tile = np.tile(np.expand_dims(r_div_q_gamma,axis=(-1,-2)),(1,1,X[0].shape[1],X[0].shape[1]))
         
             sigma_arr[s,:,:,:] = np.sum(r_div_q_gamma_tile*covar,axis=0)
             
-        regularization_diag = covar_regularization * np.repeat(np.expand_dims(np.eye(X.shape[2]),
+        regularization_diag = covar_regularization * np.repeat(np.expand_dims(np.eye(X[0].shape[1]),
                                                                              axis=0),params.k(),axis=0)
         
         # Compute new sigma
         sigma = np.sum(sigma_arr,axis=0)/\
             np.tile(np.expand_dims(np.sum(r_div_q_gamma_arr,axis=0),axis=(-1,-2)),
-                    (1,1,X.shape[2],X.shape[2])).squeeze()\
+                    (1,1,X[0].shape[1],X[0].shape[1])).squeeze()\
                     + regularization_diag #Add ridge to prevent numerical instability
          
         # Check that there is no inf/nan values
@@ -771,42 +693,10 @@ class CEM:
         # If stage > 0, we create half of init params from MVG and half of init params by sampling from observations from s=1,...,t
         else:
             
-            # Compute the entropy of observations w.r.t the dist they were sampled from and current params
-            # Exclude observations from the zeroth stage
-            # entrArr = np.zeros(shape=(self.X.shape[0]-1,self.X.shape[1]))
-            # for i in range(0,self.X.shape[0]-1):
-            #     entrArr[i] = np.squeeze(self.entropy(self.X[i,:,:],
-            #                                           self.rList[i],
-            #                                           self.q,
-            #                                           self.paramsList[i],
-            #                                           self.paramsList[-1]))
-                  
-            # Get indices where event occurred/didn't occur
-            zeroIndStage = []
-            zeroIndSamp = []
-            posIndStage = []
-            posIndSamp = []
-            
-            for i in range(0,self.X.shape[0]-1):
-                # print('rList shape:{}'.format(self.rList[i].shape))
-                hPosInd = np.where(np.squeeze(self.rList[i])>0)[0]
-                # print('hPos:{}'.format(hPosInd))
-                posIndStage += [i for ind in hPosInd]
-                posIndSamp += list(hPosInd)
-                
-                hZeroInd = np.where(np.squeeze(self.rList[i])<=0)[0]
-                zeroIndStage += [i for ind in hZeroInd]
-                zeroIndSamp += list(hZeroInd)
-            
-            zeroIndStage = np.array(zeroIndStage)
-            zeroIndSamp = np.array(zeroIndSamp)
-            posIndStage = np.array(posIndStage)
-            posIndSamp = np.array(posIndSamp)
-            
-            # Get indices where entropy is greater than zero
-            # posIndStage,posIndSamp = np.where(entrArr>0)
-            # print(self.X.shape)
-            # print('number of event occurences: {}'.format(len(posIndStage)))
+            # Get indices where Hx>0
+            posInd = np.where(np.concatenate(self.hList,axis=0))[0]
+            zeroInd = np.where(1-np.concatenate(self.hList,axis=0))[0]
+            X = np.concatenate(self.X,axis=0)
             
             # Get half of init params by sampling from the MVG
             numMVGParams = 0 #numInitParams//2
@@ -824,7 +714,7 @@ class CEM:
                 # print(len(posIndStage))
                 # print(len(posIndSamp))
                 # The mean for the MVG is chosen to be the mean of all observations where h>0
-                selectedData = self.X[posIndStage,posIndSamp,:]
+                selectedData = X[posInd,:]
                 # print('shape of mean of event data: {}'.format(selectedData.shape))
                 muPosH = np.mean(selectedData,axis=0)
                 
@@ -849,33 +739,30 @@ class CEM:
                 initParamsList.append(params)
               
             # For the remaining initParams, randomly select k samples w/o replacement. Prefer positive entropy samples.
-            numChoices = len(posIndStage)
+            numChoices = posInd.shape[0]
             for i in range(numInitParams-numMVGParams):
                 
                 if numChoices>0:
                     choice = np.random.choice(range(numChoices),size=min(k,numChoices),replace=False).astype(int)
-                    stageInds,sampInds = posIndStage[choice],posIndSamp[choice]
+                    chosenInd = list(posInd[choice])
                 else:
-                    stageInds,sampInds = [],[]
+                    chosenInd = []
                 
                 # If there was not enough samples w/ positive entropy, draw some with 0 entropy
-                if len(stageInds) < k:
+                if len(chosenInd) < k:
                     
                     # Randomly select remaining needed samples w/o replacement
-                    choice = np.random.choice(range(len(zeroIndSamp)),size=k-len(stageInds),replace=False).astype(int)
-                    remStageInds,remSampInds = zeroIndStage[choice],zeroIndSamp[choice]
+                    choice = np.random.choice(range(len(zeroInd)),size=k-len(chosenInd),replace=False).astype(int)
+                    chosenInd.append(zeroInd[choice])
                     
-                    # Append to existing indices
-                    stageInds,sampInds = np.append(stageInds,remStageInds),np.append(sampInds,remSampInds)
+                chosenInd = np.array(chosenInd).astype(int)
                     
                 # Create XBar matrix by concatenating the data vectors
-                stageInds,sampInds = stageInds.astype(int),sampInds.astype(int)
-                
                 # Get the sampled data
-                XBar = self.X[stageInds,sampInds,:]
+                XBar = X[chosenInd,:]
                 
                 # Compute covar matrix for GMM params
-                p = self.X.shape[-1]
+                p = X.shape[-1]
                 covar = np.cov(XBar,rowvar=False)
                 tr = np.trace(covar) if len(covar.shape)>0 else covar
                 covar = 3/p*tr*np.eye(p)
@@ -913,10 +800,11 @@ class CEM:
             The moving average of the cicList
         """
         
-        # Determine kMax from number of samples and computing num free params
+        # Determine kMax from number of samples and computing num free params 
         if s > 0:
-            max_free_param = np.floor(self.X.shape[1]*self.X.shape[0] / 10) #maximum number of free parameters we would like to allow.  If the divisor is 10, it means we expect that each component has 10 observations on average. 
-            kMax = min(kMax,np.floor((max_free_param+1)/(self.X.shape[2] + (self.X.shape[2]*(self.X.shape[2]+1))/2 + 1)))
+            X = np.concatenate(self.X,axis=0)
+            max_free_param = np.floor(X.shape[0] / 10) #maximum number of free parameters we would like to allow.  If the divisor is 10, it means we expect that each component has 10 observations on average. 
+            kMax = min(kMax,np.floor((max_free_param+1)/(X.shape[1] + (X.shape[1]*(X.shape[1]+1))/2 + 1)))
         
         # Window size for computing CIC moving average
         windowSize=4
@@ -926,10 +814,9 @@ class CEM:
         
         # Add new samples to existing samples
         if s==0:
-            self.X = np.expand_dims(x,axis=0)
+            self.X = [x,]
         else:
-            _x = np.expand_dims(x,axis=0)
-            self.X = np.concatenate([self.X,_x],axis=0)
+            self.X.append(x)
         
         # Run simulation and compute likelihood ratio
         try:
