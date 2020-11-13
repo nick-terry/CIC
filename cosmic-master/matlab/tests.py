@@ -250,7 +250,7 @@ def rhoTest(X,proc,params,eng,epsilon):
     # Compute the other stuff needed  w/ python
     q = proc.q(params)
     # proc.r can only operate on 2D slices
-    r = proc.r(X[0,:,:])
+    r = proc.r(X[0])
     qVal = q(X)
     Hx_Wx = r/qVal
     
@@ -259,7 +259,7 @@ def rhoTest(X,proc,params,eng,epsilon):
     eng.workspace['fu'] = eng.eval('@(x) mvnpdf(x,zeros(1,2),eye(2));')
     eng.workspace['hw'] = eng.pdf(gmm,XM)
     eng.workspace['Wx'] = eng.eval('fu(XM)./hw')
-    eng.workspace['Hx_Wx'] = npToMAT(np.array(eng.workspace['Wx'])*h(X[0,:,:]))
+    eng.workspace['Hx_Wx'] = npToMAT(np.array(eng.workspace['Wx'])*h(X[0]))
     
     matlabRes = eng.eval('mean(Hx_Wx)')
     #pythonRes = proc.rho(proc.X,proc.rList,proc.q,proc.paramsList)

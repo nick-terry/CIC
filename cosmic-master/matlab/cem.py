@@ -128,8 +128,18 @@ class CEM:
         
         if 'sampleSize' in kwargs:
             self.sampleSize = kwargs['sampleSize']
+            
+            # Check if an iterable was passed
+            try:
+                iter(self.sampleSize)
+                assert(len(self.sampleSize)==self.numIters)
+                self.variableSampleSizes = True
+                
+            except:
+                self.variableSampleSizes = False
         else:
             self.sampleSize = 1000
+            self.variableSampleSizes = False
             
         if 'seed' in kwargs:
             np.random.seed(kwargs['seed'])
@@ -301,7 +311,7 @@ class CEM:
             else:
                 _X = X
                 
-            _alpha = np.tile(alpha,(X.shape[0],1))
+            _alpha = np.tile(alpha,(_X.shape[0],1))
             
             # Compute density at each observation
             densities = np.zeros(shape=(_X.shape[0],params.k()))
@@ -711,8 +721,6 @@ class CEM:
                 # Initial guess for GMM params
                 alpha0 = np.ones(shape=(k,))/k
                 
-                # print(len(posIndStage))
-                # print(len(posIndSamp))
                 # The mean for the MVG is chosen to be the mean of all observations where h>0
                 selectedData = X[posInd,:]
                 # print('shape of mean of event data: {}'.format(selectedData.shape))
@@ -810,7 +818,10 @@ class CEM:
         windowSize=4
         
         # Draw samples from previous best GMMParams
-        x = self.generateX(params,self.sampleSize)
+        if not self.variableSampleSizes:
+            x = self.generateX(params,self.sampleSize)
+        else:
+            x = self.generateX(params,self.sampleSize[s])
         
         # Add new samples to existing samples
         if s==0:
