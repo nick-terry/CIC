@@ -140,10 +140,7 @@ def runReplicate(seed):
     procedure.run()
     
     # Estimate the failure probability
-    rho = procedure.rho(procedure.X[1:,:,:],
-                        procedure.rList[1:],
-                        procedure.q,
-                        procedure.paramsList[1:])
+    rho = procedure.rho()
     
     print('Done with replicate!')
     
@@ -153,7 +150,7 @@ if __name__ == '__main__':
     
     np.random.seed(42)
     
-    numReps = 2
+    numReps = 1
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)

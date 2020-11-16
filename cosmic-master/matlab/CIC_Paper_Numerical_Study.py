@@ -137,7 +137,7 @@ def runReplicate(seed):
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
     sampleSize = [1000,]*7 + [1700,]
-    procedure = cem.CEM(initParams,p,h,numIters=2,sampleSize=sampleSize,seed=seed,log=True,verbose=True)
+    procedure = cem.CEM(initParams,p,h,numIters=len(sampleSize),sampleSize=sampleSize,seed=seed,log=True,verbose=True)
     procedure.run()
     
     # Estimate the failure probability
@@ -151,7 +151,7 @@ if __name__ == '__main__':
     
     np.random.seed(420)
     
-    numReps = 500
+    numReps = 1
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)

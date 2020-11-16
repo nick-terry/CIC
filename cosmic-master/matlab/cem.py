@@ -135,6 +135,10 @@ class CEM:
                 assert(len(self.sampleSize)==self.numIters)
                 self.variableSampleSizes = True
                 
+            except AssertionError as e:
+                print('Incorrect number of variable sample sizes provided!')
+                raise e
+                
             except:
                 self.variableSampleSizes = False
         else:
@@ -471,45 +475,16 @@ class CEM:
         covar_regularization = 10**-6 #Add ridge to covar matrix to prevent numerical instability
         
         # To make this code (slightly) more readable
-        X,q = self.X,self.q
+        X,q = np.concatenate(self.X,axis=0),self.q
         
-        gammaList = []
-        # densityList = []
-    
-        for s in range(len(X)):
-            
-            x = X[s]
-            gamma = self.expectation(x,q,params)
-            
-            gammaList.append(gamma)
+        gamma = self.expectation(X, q, params)
         
-        r_div_q_arr = np.zeros(shape=(len(X),1))
-        r_div_q_gamma_arr = np.zeros(shape=(len(X),params.k()))
-        mu_arr  = np.zeros(shape=(len(X),params.k(),X[0].shape[1]))
+        r_div_q = np.concatenate(self.Hx_WxList,axis=0)
         
-        for s in range(len(X)):
-            
-            # Compute the denominator of alpha_j expression
-            r_div_q = self.Hx_WxList[s]
-
-            # Sum over all i, store in array for stage s
-            r_div_q_arr[s] = np.sum(r_div_q,axis=0)[0]
-            
-            # Compute the numerator for alpha_j expression/denominator for mu_j and sigma_j expressions
-            r_div_q_gamma = r_div_q*gammaList[s]
-            
-            # Sum over all i, store in array for stage s/each j
-            r_div_q_gamma_arr[s] = np.sum(r_div_q_gamma,axis=0)
-            
-            # Tile these quantities so that dimensions match for multiplication
-            r_div_q_gamma_tile = np.repeat(np.expand_dims(r_div_q_gamma,axis=-1),X[s].shape[1],axis=-1)
-            x_tile = np.repeat(np.expand_dims(X[s],axis=1),params.k(),axis=1)
-            
-            # Compute numerator of expression for mu_j, sum over all i, store in array for stage s/each j
-            mu_arr[s] = np.sum(r_div_q_gamma_tile*x_tile,axis=0)
-            
+        r_div_q_gamma = r_div_q * gamma
+        
         # Compute new alpha, mu
-        alpha = np.sum(r_div_q_gamma_arr,axis=0)/np.sum(r_div_q_arr)
+        alpha = np.sum(r_div_q_gamma,axis=0)/np.sum(r_div_q)
         
         # Check that the mixing proportions sum to 1
         try:
@@ -526,9 +501,10 @@ class CEM:
         except Exception as e:
             print('Floating point error while computing alpha!')
             raise e
-            
-        mu = np.sum(mu_arr,axis=0)/np.repeat(np.expand_dims(np.sum(r_div_q_gamma_arr,axis=0),axis=1),
-                                             X[0].shape[1],axis=1)
+
+        mu = np.sum(r_div_q_gamma[:,:,None]*X[:,None,:],axis=0)/np.sum(r_div_q_gamma,axis=0,keepdims=True).T
+        if len(mu.shape)==1:
+            mu = mu[None,:]
         
         # Check that there is no inf/nan values
         try:
@@ -537,45 +513,27 @@ class CEM:
         except Exception as e:
             print('Floating point error while computing mu!')
             raise e
-            
         
-        sigma_arr = np.zeros(shape=(len(X),params.k(),X[0].shape[1],X[0].shape[1]))
-        for s in range(len(X)):
-    
-            # Tile mu for each sample of stage s
-            mu_tile = np.tile(mu,(X[s].shape[0],1,1))
-            
-            # Tile the samples of stage s for each component mean mu_j
-            x_tile = np.repeat(np.expand_dims(X[s],axis=1),params.k(),axis=1)
-            
-            # Compute the vector X_i-mu_j
-            diff = x_tile-mu_tile
-            
-            # Compute covar matrices w/ outer product (X_i-mu_j)(X_i-mu_j)^T
-            covar = np.zeros(shape=(X[s].shape[0],params.k(),X[s].shape[1],X[s].shape[1]))
-            for i in range(X[s].shape[0]):
-                for j in range(params.k()):
-                    covarMat = np.outer(diff[i,j,:],diff[i,j,:])
-                    covar[i,j,:,:] = covarMat
-            
-            # Compute the denominator of expression for sigma_j
-            r_div_q = self.Hx_WxList[s]
-            r_div_q_gamma = r_div_q*gammaList[s]
-            
-            # Tile the denominator 
-            r_div_q_gamma_tile = np.tile(np.expand_dims(r_div_q_gamma,axis=(-1,-2)),(1,1,X[0].shape[1],X[0].shape[1]))
+        if mu.shape[0]==1:
+            # Compute difference of data from mean vector
+            diff = X-mu
+            # Compute sigma using a vectorized outer product. 
+            # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
+            sigma = np.sum(r_div_q_gamma[:,:,None]*(diff[:,:,None]*diff[:,None]),axis=0)/\
+                np.sum(r_div_q_gamma,axis=0) + covar_regularization * np.eye(mu.shape[-1])
+            if len(sigma.shape)==2:
+                sigma = sigma[None,:,:]
         
-            sigma_arr[s,:,:,:] = np.sum(r_div_q_gamma_tile*covar,axis=0)
+        else:
+            # Compute difference of data from mean vector
+            diff = X[:,None,:]-mu
+            # Compute sigma using a vectorized outer product. 
+            # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
+            sigma = np.sum(r_div_q_gamma[:,:,None,None]*(diff[:,:,:,None]*diff[:,:,None]),axis=0)/\
+                np.sum(r_div_q_gamma,axis=0,keepdims=True).T[:,:,None] + covar_regularization * np.eye(mu.shape[-1])
+            if len(sigma.shape)==2:
+                sigma = sigma[None,:,:]
             
-        regularization_diag = covar_regularization * np.repeat(np.expand_dims(np.eye(X[0].shape[1]),
-                                                                             axis=0),params.k(),axis=0)
-        
-        # Compute new sigma
-        sigma = np.sum(sigma_arr,axis=0)/\
-            np.tile(np.expand_dims(np.sum(r_div_q_gamma_arr,axis=0),axis=(-1,-2)),
-                    (1,1,X[0].shape[1],X[0].shape[1])).squeeze()\
-                    + regularization_diag #Add ridge to prevent numerical instability
-         
         # Check that there is no inf/nan values
         try:
             assert(not np.any(np.isnan(sigma)))
@@ -619,7 +577,7 @@ class CEM:
             alpha,mu,sigma = self.emIteration(params)
             
             # Check to make sure that the new covar matrices are well-conditioned
-            condNum = np.linalg.cond(sigma)
+            condNum = np.linalg.cond(sigma.astype(np.float64))
             if np.any(condNum>condThresh):
                 
                 # If covar is not well conditioned (i.e. model is overfit), abort the EM procedure
