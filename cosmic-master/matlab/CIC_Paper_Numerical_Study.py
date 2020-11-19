@@ -175,11 +175,11 @@ if __name__ == '__main__':
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    # with open('results.csv','w') as f:
-    #     writer = csv.writer(f)
-    #     # Header row
-    #     writer.writerow(['rho','final_k'])
-    #     writer.writerows(toCsvList)
+    with open('results.csv','w') as f:
+        writer = csv.writer(f)
+        # Header row
+        writer.writerow(['rho','final_k'])
+        writer.writerows(toCsvList)
     
 
     

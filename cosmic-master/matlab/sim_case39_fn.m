@@ -85,7 +85,9 @@ function [blackout,demand_lost] = sim_case39_fn(branch1,branch2,useVerbose)
     event(4,[C.ev.time C.ev.type]) = [t_max C.ev.finish];
 
     %% run the simulation
-    [outputs,ps] = simgrid(ps,event,'sim_case39',opt);
+    %% Create a filename which is unique to this MATLAB process so that we can run w/ Python multiprocessing
+    fname_ = 'sim_case39_'+feature('getpid')
+    [outputs,ps] = simgrid(ps,event,fname_,opt);
 
     %% print the results
     fname = outputs.outfilename;

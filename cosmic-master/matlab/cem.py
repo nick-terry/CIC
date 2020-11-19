@@ -586,8 +586,8 @@ class CEM:
                 else:
                     errStr = ''
                     if params.k()==1:
-                        numEventsOcc = np.zeros(self.X.shape[0])
-                        for i in range(self.X.shape[0]):
+                        numEventsOcc = np.zeros(len(self.X))
+                        for i in range(len(self.X)):
                             numEventsOcc[i] = np.sum(self.rList[i]>0)
                         kList = [_params.k() for _params in self.paramsList]                                
                         errStr = 'condition number of Sigma: {} \n'.format(condNum)+\
