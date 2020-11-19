@@ -136,7 +136,7 @@ def runReplicate(seed):
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
     procedure = cem.CEM(initParams,p,h,numIters=7,sampleSize=1000,seed=seed,
-                        log=False,verbose=True)
+                        log=False,verbose=True,covar='homogeneous')
     procedure.run()
     
     # Estimate the failure probability

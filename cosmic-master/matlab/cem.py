@@ -164,6 +164,11 @@ class CEM:
         else:
             self.log = True
             
+        if 'covar' in kwargs:
+            self.covarStruct = kwargs['covar']
+        else:
+            self.covarStruct = 'full'
+            
         self.cicArray = np.zeros(shape=(self.numIters,1))
             
     def getVectorizedDensity(self,densityFn):
@@ -514,25 +519,53 @@ class CEM:
             print('Floating point error while computing mu!')
             raise e
         
-        if mu.shape[0]==1:
-            # Compute difference of data from mean vector
-            diff = X-mu
-            # Compute sigma using a vectorized outer product. 
-            # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
-            sigma = np.sum(r_div_q_gamma[:,:,None]*(diff[:,:,None]*diff[:,None]),axis=0)/\
-                np.sum(r_div_q_gamma,axis=0) + covar_regularization * np.eye(mu.shape[-1])
-            if len(sigma.shape)==2:
-                sigma = sigma[None,:,:]
+        # If using full covar structure, compute the covar matrix using outer productfor full sample covar
+        if self.covarStruct == 'full':
+            if mu.shape[0]==1:
+                # Compute difference of data from mean vector
+                diff = X-mu
+                # Compute sigma using a vectorized outer product. 
+                # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
+                sigma = np.sum(r_div_q_gamma[:,:,None]*(diff[:,:,None]*diff[:,None]),axis=0)/\
+                    np.sum(r_div_q_gamma,axis=0) + covar_regularization * np.eye(mu.shape[-1])
+                if len(sigma.shape)==2:
+                    sigma = sigma[None,:,:]
+            
+            else:
+                # Compute difference of data from mean vector
+                diff = X[:,None,:]-mu
+                # Compute sigma using a vectorized outer product. 
+                # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
+                sigma = np.sum(r_div_q_gamma[:,:,None,None]*(diff[:,:,:,None]*diff[:,:,None]),axis=0)/\
+                    np.sum(r_div_q_gamma,axis=0,keepdims=True).T[:,:,None] + covar_regularization * np.eye(mu.shape[-1])
+                if len(sigma.shape)==2:
+                    sigma = sigma[None,:,:]
+                
+        # If using homogeneous covariance structure, covar matrix is a scalar times identity matrix.
+        # We compute the scaling factor using an EM update equation
+        elif self.covarStruct == 'homogeneous':
+            if mu.shape[0]==1:
+                # Compute difference of data from mean vector
+                diff = X-mu
+                # Compute sigma using a vectorized outer product. 
+                # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
+                sigma = np.sum(r_div_q_gamma*np.sum(diff**2,axis=-1,keepdims=True),axis=0)[:,None]/\
+                    np.sum(r_div_q_gamma,axis=0)/X.shape[-1]
+                sigma = (sigma + covar_regularization) * np.eye(X.shape[-1])
+                if len(sigma.shape)==2:
+                    sigma = sigma[None,:,:]
         
-        else:
-            # Compute difference of data from mean vector
-            diff = X[:,None,:]-mu
-            # Compute sigma using a vectorized outer product. 
-            # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
-            sigma = np.sum(r_div_q_gamma[:,:,None,None]*(diff[:,:,:,None]*diff[:,:,None]),axis=0)/\
-                np.sum(r_div_q_gamma,axis=0,keepdims=True).T[:,:,None] + covar_regularization * np.eye(mu.shape[-1])
-            if len(sigma.shape)==2:
-                sigma = sigma[None,:,:]
+            else:
+                # Compute difference of data from mean vector
+                diff = X[:,None,:]-mu
+                # Compute sigma using a vectorized outer product. 
+                # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
+                sigma = np.sum(r_div_q_gamma[:,:,None]*np.sum(diff**2,axis=-1,keepdims=True),axis=0)/\
+                    np.sum(r_div_q_gamma,axis=0,keepdims=True).T/X.shape[-1] + covar_regularization
+                sigma = np.repeat(np.repeat(sigma[:,:,None],axis=1,repeats=X.shape[-1]),
+                                  axis=2,repeats=X.shape[-1]) * np.eye(X.shape[-1])
+                if len(sigma.shape)==2:
+                    sigma = sigma[None,:,:]
             
         # Check that there is no inf/nan values
         try:
