@@ -11,11 +11,10 @@ import scipy.special as spc
 import numpy as np
 import multiprocessing as mp
 import csv
-import pickle
 
 # Import cem test version (stored locally, NOT a package!)
 import cem
-# import simengine as se
+import simengine as se
 
 def p(x):
     """
@@ -31,23 +30,20 @@ def p(x):
 
     """
     
-    results = stat.norm.logpdf(x,0,6)
+    results = stat.norm.logpdf(x,0,3)
     
     # Use log transform to prevent numerical issues
     log_res = np.sum(results,axis=1)
     
     return np.expand_dims(np.exp(log_res),axis=1)
 
+
+
 def runReplicate(seed):
     
     # Create a SimulationEngine for evaluating h(x)
-    # sim = se.SimulationEngine()
-    # dataDim = sim.numBranches
-    dataDim = 46
-    
-    # load lookup table for simulation results
-    with open('simDict.pck','rb') as f:
-        hDict = pickle.load(f)
+    sim = se.SimulationEngine()
+    dataDim = sim.numBranches
     
     def _runSim(x):
         """
@@ -70,14 +66,7 @@ def runReplicate(seed):
         # Pull out the branches that failed and simulate.
         failInd = np.where(x==1)[0]
         br1,br2 = int(failInd[0]),int(failInd[1])
-        
-        failTup = (br1,br2)
-        if failTup in hDict:
-            result =  hDict[failTup]
-        else:
-            result = hDict[failTup[::-1]]
-    
-        return result
+        return sim._simulate(br1,br2)
 
     def h(x):
         
@@ -90,40 +79,22 @@ def runReplicate(seed):
             results = np.zeros(shape=(n,1))
             
             for i in range(n):
-               
-                # check if a repair happened
-                if np.sum(contingencies[i,:])==0:
-                    result = 0
-                else:    
-                    result = _runSim(contingencies[i,:])
+                # Take only the first item from the result tuple (blackout boolean)
+                result = _runSim(contingencies[i,:])[0]
                 results[i] = result
-                    
+                
         else:
-            results = np.array(_runSim(contingencies)).reshape((1,1))
+            results = np.array(_runSim(contingencies))[0].reshape((1,1))
             
         return results
     
     def ttfToContingency(x):
         
-        # note: the scale param is what is usually called the rate param for the exp dist
-        rate = 10
-        # get time to repair 1st failure
-        # r = stat.expon.rvs(loc=0,scale=rate,size=x.shape[0])
-        r = 1/rate
-        
-        # see if the first failure is fixed before second failure
-        firstTwo = np.sort(x,axis=1)[:,:2]
-        repaired = np.abs(firstTwo[:,1]-firstTwo[:,0]) > r
-        
-        contingency = np.zeros_like(x)
-    
         # Use failure times to generate contingency vector
         failInd = np.argsort(x,axis=1)[:,:2].astype(int)
+        contingency = np.zeros_like(x)
         np.put_along_axis(contingency, failInd, 1, axis=1)
-    
-        # set repaired samples to zero
-        contingency[repaired] = np.zeros(x.shape[1])
-    
+        
         return contingency
     
     np.random.seed(seed)
@@ -146,20 +117,18 @@ def runReplicate(seed):
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    sampleSize = [11000,] + [5000,]*4 + [10000]
-    # sampleSize = [1000,]
+    sampleSize = [6000,] + [4000,]*2 
     
     procedure = cem.CEM(initParams,p,h,numIters=len(sampleSize),sampleSize=sampleSize,seed=seed,
-                        log=True,verbose=True,covar='full')
+                        log=True,verbose=True,covar='homogeneous')
     procedure.run()
     
     # Estimate the failure probability
     rho = procedure.rho()
-    k = procedure.paramsList[-1].k()
     
     print('Done with replicate!')
     
-    return rho,k
+    return rho,procedure
 
 if __name__ == '__main__':
     
@@ -185,12 +154,12 @@ if __name__ == '__main__':
         resultList = result.get()
     # rhoList = []
     # for seed in list(seeds):
-    #     rho,ce = runReplicate(seed)
+    #     rho,ce = runReplicate(seed,dataDim)
     #     rhoList.append(rho)
     
-    # toCsvList = [[rho,] for rho in rhoList]
     rhoList = [item[0] for item in resultList]
-    toCsvList = [[item[0],item[1]] for item in resultList]
+    # toCsvList = [[rho,] for rho in rhoList]
+    toCsvList = [[item[0],item[1].paramsList[-1].k()] for item in resultList]
     
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))

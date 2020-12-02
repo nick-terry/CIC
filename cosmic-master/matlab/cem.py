@@ -393,7 +393,7 @@ class CEM:
         alpha,mu,sigma = params.get()
         if params.k() > 1:
             try:
-                mixtureComponents = np.random.choice(np.array(range(params.k())),size=(num,),p=alpha.squeeze())
+                mixtureComponents = np.random.choice(np.array(range(params.k())),size=(num,),p=alpha.squeeze().astype(np.float64))
             except Exception as e:
                 print(alpha.squeeze())
                 print(np.sum(alpha.squeeze()))
@@ -564,6 +564,29 @@ class CEM:
                     np.sum(r_div_q_gamma,axis=0,keepdims=True).T/X.shape[-1] + covar_regularization
                 sigma = np.repeat(np.repeat(sigma[:,:,None],axis=1,repeats=X.shape[-1]),
                                   axis=2,repeats=X.shape[-1]) * np.eye(X.shape[-1])
+                if len(sigma.shape)==2:
+                    sigma = sigma[None,:,:]
+            
+        elif self.covarStruct=='diagonal':
+            if mu.shape[0]==1:
+                # Compute difference of data from mean vector
+                diff = X-mu
+                # Compute sigma using a vectorized outer product. 
+                # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
+                sigma = np.sum(r_div_q_gamma * diff**2,axis=0)/\
+                    np.sum(r_div_q_gamma,axis=0)/X.shape[-1]
+                sigma = np.diag(sigma) + covar_regularization * np.eye(X.shape[-1])
+                if len(sigma.shape)==2:
+                    sigma = sigma[None,:,:]
+        
+            else:
+                # Compute difference of data from mean vector
+                diff = X[:,None,:]-mu
+                # Compute sigma using a vectorized outer product. 
+                # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
+                sigma = np.sum(r_div_q_gamma[:,:,None] * diff**2,axis=0)/\
+                    np.sum(r_div_q_gamma,axis=0,keepdims=True).T
+                sigma = np.apply_along_axis(np.diag,axis=1,arr=sigma) + covar_regularization * np.eye(X.shape[-1])
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
             
@@ -803,7 +826,12 @@ class CEM:
         if s > 0:
             X = np.concatenate(self.X,axis=0)
             max_free_param = np.floor(X.shape[0] / 10) #maximum number of free parameters we would like to allow.  If the divisor is 10, it means we expect that each component has 10 observations on average. 
-            kMax = min(kMax,np.floor((max_free_param+1)/(X.shape[1] + (X.shape[1]*(X.shape[1]+1))/2 + 1)))
+            if self.covarStruct=='homogeneous':
+                kMax = min(kMax,np.floor((max_free_param+1)/(X.shape[1] + 2)))
+            elif self.covarStruct=='diagonal':
+                kMax = min(kMax,np.floor((max_free_param+1)/(2*X.shape[1] + 1)))
+            elif self.covarStruct=='full':
+                kMax = min(kMax,np.floor((max_free_param+1)/(X.shape[1] + (X.shape[1]*(X.shape[1]+1))/2 + 1)))
         
         # Window size for computing CIC moving average
         windowSize=4
