@@ -108,18 +108,12 @@ class CEM:
         self.bestParamsLists = []
         self.cicLists = [] 
         
-        # Some important constants which can be changed
-        # Set a threshold beyond which we consider r_x to be zero to avoid div by zero
-        if 'eps' in kwargs:
-            self.eps = kwargs['eps']
-        else:
-            self.eps = 1e-10
-        
+        # Some important constants which can be changed     
         # Set jitter used to prevent numerical issues due to zero densities
         if 'jitter' in kwargs:
             self.jitter = kwargs['jitter']
         else:
-            self.jitter = 1e-300
+            self.jitter = 0
           
         if 'numIters' in kwargs:
             self.numIters = kwargs['numIters']
@@ -327,7 +321,7 @@ class CEM:
             for j in range(params.k()):
                 densities[:,j] = stat.multivariate_normal.pdf(_X,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
             
-            densities = np.expand_dims(np.sum(_alpha*densities,axis=1),axis=1)
+            densities = np.expand_dims(np.sum(np.exp(np.log(_alpha) + np.log(densities)),axis=1),axis=1)
             
             return densities
         
@@ -442,9 +436,8 @@ class CEM:
                 raise(e)
                 
         log_alpha_q = _log_alpha + log_densities
-  
-        # Add jitter to density to prevent div by zero error
-        log_density = np.expand_dims(spc.logsumexp(log_alpha_q,axis=1),axis=1) + self.jitter
+
+        log_density = np.expand_dims(spc.logsumexp(log_alpha_q,axis=1),axis=1)
         _log_density = np.tile(log_density,(1,params.k()))
         
         gamma = np.exp(log_alpha_q - _log_density)
@@ -477,7 +470,7 @@ class CEM:
         sigma: numpy array
     
         """
-        covar_regularization = 10**-6 #Add ridge to covar matrix to prevent numerical instability
+        covar_regularization = 10**-100 #Add ridge to covar matrix to prevent numerical instability
         
         # To make this code (slightly) more readable
         X,q = np.concatenate(self.X,axis=0),self.q
@@ -486,10 +479,11 @@ class CEM:
         
         r_div_q = np.concatenate(self.Hx_WxList,axis=0)
         
-        r_div_q_gamma = r_div_q * gamma
+        #TODO: fix div by zero in log
+        r_div_q_gamma = np.exp( np.log(r_div_q) + np.log(gamma))
         
         # Compute new alpha, mu
-        alpha = np.sum(r_div_q_gamma,axis=0)/np.sum(r_div_q)
+        alpha = np.exp( np.log(np.sum(r_div_q_gamma,axis=0)) - np.log(np.sum(r_div_q)))
         
         # Check that the mixing proportions sum to 1
         try:
@@ -855,11 +849,11 @@ class CEM:
             # Get simulation result
             Hx = self.h(x)
             # Get likelihood ratio
-            q_theta = self.q(params)
-            px = self.p(x)
-            Wx = px/q_theta(x)
+            log_q_theta = self.log_q(params)
+            log_px = self.p(x) # this actually computes the log density
+            Wx = np.exp(log_px - log_q_theta(x)) #potential numerical error here. try using logs. TODO
             
-            r_x = Hx * px
+            r_x = Hx * np.exp(log_px)
             Hx_Wx = Hx * Wx
             
         except Exception as e:
@@ -934,6 +928,12 @@ class CEM:
                     
                     print('In stage: {}'.format(s))
                     print('Num k={} resets: {}'.format(k,resetCounter))
+                    
+                    # If we have too many failures, stop the program. Otherwise this can be an
+                    # endless loop
+                    if resetCounter > 100:
+                        e = Exception('Unable to solve EM after 100 tries...aborting!')
+                        raise(e)
                 
                 # If only some of them failed, just take what we've got and break
                 else:

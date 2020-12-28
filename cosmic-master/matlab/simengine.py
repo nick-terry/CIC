@@ -14,7 +14,7 @@ import scipy.stats as stat
 
 class SimulationEngine:
     
-    def __init__(self,engine=None,seed=42,simulation='39-bus',matlabPrint=False):
+    def __init__(self,engine=None,seed=42,simulation='39-bus-2',matlabPrint=False):
         
         #Start a MATLAB engine for running COSMIC simulation
         if engine is None:
@@ -34,9 +34,11 @@ class SimulationEngine:
         #Define the simulation to run
         self.simFns = {'9-bus': self.eng.sim_case9_fn,
                       '39-bus': self.eng.sim_case39_fn,
-                      '2383-bus': self.eng.sim_case2383_fn}
+                      '2383-bus': self.eng.sim_case2383_fn,
+                      '39-bus-2':self.eng.sim_case39_fn2}
         self.simToNumBranches = {'9-bus':9,
                                  '39-bus':46,
+                                 '39-bus-2':46,
                                  '2383-bus':2896}
         
         try:
@@ -124,6 +126,37 @@ class SimulationEngine:
                 blackout,lostDemand = self.simFn(br1+1,br2+1,verbose, nargout=2, stdout=self.stdout)
         # If the simulation does not converge, declare a blackout
         except matlab.engine.MatlabExecutionError:
+            blackout,lostDemand = 1,0
+        return blackout,lostDemand
+    
+    def _simulate2(self,branches,verbose=False):
+        """
+        Run COSMIC simulation of N-2 contingency in MATLAB
+
+        Parameters
+        ----------
+        branches : numpy array
+            Vector containing the components that failed.
+
+        Returns
+        -------
+        blackout : boolean
+            Whether or not a blackout occurred.
+        lostDemand : float
+            Amount of demand lost due to outage.
+
+        """
+        
+        # Need to specify nargout=2 to get two results correctly
+        _branches = matlab.int8(list(branches))
+        try:
+            if self.matlabPrint:
+                blackout,lostDemand = self.simFn(_branches,verbose, nargout=2)
+            else:
+                blackout,lostDemand = self.simFn(_branches,verbose, nargout=2, stdout=self.stdout)
+        # If the simulation does not converge, declare a blackout
+        except matlab.engine.MatlabExecutionError as e:
+            print(e)
             blackout,lostDemand = 1,0
         return blackout,lostDemand
 

@@ -31,7 +31,7 @@ def p(x):
 
     """
     
-    results = stat.norm.logpdf(x,0,6)
+    results = stat.norm.logpdf(x,0,1)
     
     # Use log transform to prevent numerical issues
     log_res = np.sum(results,axis=1)
@@ -106,14 +106,14 @@ def runReplicate(seed):
     def ttfToContingency(x):
         
         # note: the scale param is what is usually called the rate param for the exp dist
-        rate = 10
+        rate = 5
         # get time to repair 1st failure
         # r = stat.expon.rvs(loc=0,scale=rate,size=x.shape[0])
-        r = 1/rate
+        rTime = 1/rate
         
         # see if the first failure is fixed before second failure
         firstTwo = np.sort(x,axis=1)[:,:2]
-        repaired = np.abs(firstTwo[:,1]-firstTwo[:,0]) > r
+        repaired = np.abs(firstTwo[:,1]-firstTwo[:,0]) > rTime
         
         contingency = np.zeros_like(x)
     

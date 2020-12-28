@@ -6,9 +6,9 @@ function [ final_est, final_density, model_info ] = CEM( w0, mu0, sig0, H, fu, i
 
 %% Setup used for Table 2 in KS(2013)
 n_steps = 6;
-n_per_initstep = 10^3; 
-n_per_step = 10^3; 
-n_final = 1700; % the case corresponding to c.o.v. = 3%
+n_per_initstep = 10^4; 
+n_per_step = 10^4; 
+n_final = 2*10^4; % the case corresponding to c.o.v. = 3%
 
 %% t = 0
 initGM = gmdistribution(mu0, sig0, w0);

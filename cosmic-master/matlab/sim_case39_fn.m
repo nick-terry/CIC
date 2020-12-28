@@ -75,18 +75,20 @@ function [blackout,demand_lost] = sim_case39_fn(branch1,branch2,useVerbose)
     event = zeros(4,C.ev.cols);
     % start
     event(1,[C.ev.time C.ev.type]) = [0 C.ev.start];
+
     % trip a branch
     event(2,[C.ev.time C.ev.type]) = [3 C.ev.trip_branch];
     event(2,C.ev.branch_loc) = branch1;
     % trip a branch
     event(3,[C.ev.time C.ev.type]) = [3 C.ev.trip_branch];
     event(3,C.ev.branch_loc) = branch2;
+    
     % set the end time
     event(4,[C.ev.time C.ev.type]) = [t_max C.ev.finish];
 
     %% run the simulation
     %% Create a filename which is unique to this MATLAB process so that we can run w/ Python multiprocessing
-    fname_ = 'sim_case39_'+feature('getpid')
+    fname_ = 'sim_case39_'+feature('getpid');
     [outputs,ps] = simgrid(ps,event,fname_,opt);
 
     %% print the results
