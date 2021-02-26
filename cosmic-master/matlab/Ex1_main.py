@@ -35,7 +35,8 @@ def p(x):
 
     """
     
-    results = stat.multivariate_normal.pdf(x,np.zeros(shape=(2,)),np.eye(2))
+    # results = stat.multivariate_normal.pdf(x,np.zeros(shape=(2,)),np.eye(2))
+    results = stat.multivariate_normal.logpdf(x,np.zeros(shape=(2,)),np.eye(2))
     
     return np.expand_dims(results,axis=1)
 
@@ -55,9 +56,9 @@ def h(x):
 
     '''
     
-    bb = 5
-    kk = .5
-    ee = .1
+    bb = 2
+    kk = .1
+    ee = 0
     
     h_x = (bb-x[:,1]-kk*(x[:,0]-ee)**2) <= 0
     return np.expand_dims(h_x,axis=1)

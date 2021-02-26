@@ -100,7 +100,7 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 100
+    numReps = 2
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)

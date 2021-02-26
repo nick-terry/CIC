@@ -453,6 +453,46 @@ class CEM:
         
         return gamma
     
+    def log_expectation(self,x,q,params):
+        """
+        Expectation step of EM algorithm. Returns log of gamma.
+    
+        Parameters
+        ----------
+        x : numpy array
+            Sampled data from GMM.
+        q : function
+            The density function for the GMM        
+        params : GMMParams
+            GMM params.
+    
+        Returns
+        -------
+        gamma : numpy array.
+            
+        """
+        # Tile and reshape arrays for vectorized computation
+        alpha,mu,sigma = params.get()
+        _log_alpha = np.tile(np.log(alpha),(x.shape[0],1))
+        
+        # Compute density at each observation
+        log_densities = np.zeros(shape=(x.shape[0],params.k()))
+        for j in range(params.k()):
+            try:
+                log_densities[:,j] = stat.multivariate_normal.logpdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
+            except Exception as e:
+                print(sigma[j,:])
+                raise(e)
+                
+        log_alpha_q = _log_alpha + log_densities
+
+        log_density = np.expand_dims(spc.logsumexp(log_alpha_q,axis=1),axis=1)
+        _log_density = np.tile(log_density,(1,params.k()))
+        
+        log_gamma = log_alpha_q - _log_density
+        
+        return log_gamma
+    
     def emIteration(self,params):
         """
          Use EM algorithm to update parameters.   
@@ -474,13 +514,24 @@ class CEM:
         
         # To make this code (slightly) more readable
         X,q = np.concatenate(self.X,axis=0),self.q
-        
-        gamma = self.expectation(X, q, params)
+         
+        # gamma = self.expectation(X, q, params)
+        log_gamma =  self.log_expectation(X, q, params)
         
         r_div_q = np.concatenate(self.Hx_WxList,axis=0)
         
-        #TODO: fix div by zero in log
-        r_div_q_gamma = np.exp( np.log(r_div_q) + np.log(gamma))
+        # We need to avoid taking log of zero entries here
+        r_div_q_gamma = np.zeros_like(log_gamma)
+        nzi = np.squeeze(r_div_q>0) 
+        
+        # try:
+        #     assert(np.all(gamma[nzi]>0))
+        # except Exception as e:
+        #     print('Some gamma values are negative!')
+        #     raise e
+        
+        # This works since multiplying by the zero entries still yields zero
+        r_div_q_gamma[nzi] = np.exp( np.log(r_div_q[nzi]) + log_gamma[nzi] )
         
         # Compute new alpha, mu
         alpha = np.exp( np.log(np.sum(r_div_q_gamma,axis=0)) - np.log(np.sum(r_div_q)))
@@ -854,6 +905,9 @@ class CEM:
             Wx = np.exp(log_px - log_q_theta(x)) #potential numerical error here. try using logs. TODO
             
             r_x = Hx * np.exp(log_px)
+            
+            # This computation involves multiplying a likelihood ratio by 0 or 1. 
+            # Shouldn't be any numerical issues here.
             Hx_Wx = Hx * Wx
             
         except Exception as e:
@@ -1078,7 +1132,7 @@ class CEM:
                 print('Error during runStage: {}'.format(str(e)))
                 if self.log:
                     print('Aborting replication {} due to error!'.format(__name__))
-                    logging.ERROR(str(e))
+                    logging.error(str(e))
                 # Write out the CEM object for diagnosing the error
                 self.write()
                 raise e
