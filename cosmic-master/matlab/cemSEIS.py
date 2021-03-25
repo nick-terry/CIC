@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Sun Sep 13 13:25:44 2020
+Created on Fri Feb 26 18:19:04 2021
 
 @author: nick
 """
-
-'''
-
-Implementation of cross-entropy information criterion method from the paper
-"Information Criterion for Boltzmann Approximation Problems" by Choe, Chen, and Terry.
-
-'''
 import numpy as np
-# Want to raise an exception if divide by zero
-# np.seterr(divide='raise')
-import scipy.stats as stat
-import scipy.special as spc
-import pickle as pck
-import datetime as dttm
-import os
-import copy
 import logging
-    
+
+import cem
+import defensiveIS
+import copy
+
 class GMMParams:
     
     def __init__(self,alpha,mu,sigma,dataDim):
@@ -74,12 +63,13 @@ class GMMParams:
             stringRep += 'sigma={}\n\n'.format(self._sigma[j,:,:])
         
         return stringRep
+
+class CEMSEIS(cem.CEM):
     
-class CEM:
-    
-    def __init__(self,initParams,p,h,**kwargs):
+    def __init__(self,initParams,p,samplingOracle,h,alpha=.1,**kwargs):
         """
-        Create a new CEM (Cross-Entropy Minimizer)
+        Create a new CEMSEIS 
+        (Cross-Entropy Minimizer w/ Safe and Effective Importance Sampling).
 
         Parameters
         ----------
@@ -87,8 +77,13 @@ class CEM:
             The initial parameters of the GMM model.
         p : function
             Returns the true density (likelihood) at a given point.
+        samplingOracle : function
+            Returns samples from the true/nominal density
         h : function
             Simulator evaluation
+        alpha : float in (0,1),optional
+            The weight given to the nominal density in the proposal mixture.
+            Default is .1 as recommended in Owen and Zhou.
         **kwargs : dict
             Keyword arguments.
 
@@ -98,12 +93,18 @@ class CEM:
         self.paramsList = [initParams,]
         self.dim = initParams.get()[1].shape[1]
         self.p = p
+        self.samplingOracle = samplingOracle
         self.h = h
+        self.alpha = .1    
         
+        # Store some likelihoods/function evals to avoid recomputing
         self.hList = []
+        self.pxList = []
+        self.qxList = []
+        
         self.rList = []
         self.Hx_WxList = []
-        
+
         # Store some historical data as procedure is executed
         self.bestParamsLists = []
         self.cicLists = [] 
@@ -163,77 +164,15 @@ class CEM:
         else:
             self.covarStruct = 'full'
             
-        self.covar_regularization = 10**-100
-            
         self.cicArray = np.zeros(shape=(self.numIters,1))
-            
-    def getVectorizedDensity(self,densityFn):
-        """
-        Given a function which computes the density function at an observation
-        (1D numpy array), vectorize the function to operate on arrays of observations
-        (2D numpy array). The 0-axis is assumed to be indexed by the observation.
-    
-        Parameters
-        ----------
-        densityFn : function
-            1D density function.
-    
-        Returns
-        -------
-        vectorized : function
-            2D vectorized density function.
-    
-        """
         
-        vectorized = lambda x : np.apply_along_axis(densityFn, axis=0, arr=x)
-        return vectorized
-    
-    def c_bar(self,params):
-        """
-        Estimate the cross-entropy from the importance sampling
-        distribution defined by eta, using the estimator from equation 3.7 of
-        the paper.
-    
-        Parameters
-        ----------
-        params : list
-            Parameters of the approximation we wish to estimate cross entropy for
-    
-    
-        Returns
-        -------
-        _c_bar : float
-            The estimated cross-entropy.
-    
-        """
+        self.covar_regularization = 10**-100
         
-        X = np.concatenate(self.X,axis=0)
-        log_q_theta = self.log_q(params)
-        llh = log_q_theta(X)
-        
-        _c_bar = -np.mean(llh * np.concatenate(self.Hx_WxList))
-        
-        return _c_bar
-    
     def rho(self):
         """
-        Vectorized computation of the consistent estimator of rho given in equation
-        3.12 of the paper.
-    
-        Parameters
-        ----------
-        X : numpy array
-            The samples draw from the importance sampling distribution. First
-            dimension is stage, second dimension number of samples, third dimension is the dimension of
-            the space from which each observation is drawn (i.e. X \in R^3).
-        rList : list
-            List containing the non-negative function r to which the target density is proportional,
-            evaluated at the sampled points X, for each stage.
-        q : function
-            Given parameters, returns a density function from
-            the posited parametric family.
-        paramsList : list
-            Parameters of the approximation of the target distribution Q^* at each stage.
+        Vectorized computation of estimator of event probability. Using the MCV
+        estimator from "Safe and Effective Importance Sampling", Owen and Zhou.
+        (Equation 16)
     
         Returns
         -------
@@ -241,132 +180,29 @@ class CEM:
             The estimate of the normalizing constant rho at the current stage (t-1)
     
         """
+        
         # Use consistent unbiased estimator for zeroth stage
         if len(self.X)==1:
-            _rho = np.mean(np.concatenate(self.Hx_WxList,axis=0))
+            
+            # Compute the control coefficients beta
+            fx = np.concatenate(self.hList, axis=0)
+            px = np.concatenate(self.pxList, axis=0)
+            qx = np.concatenate(self.qxList, axis=0)
         
         # Otherwise, use cumulative estimate that excludes zeroth stage
         else:
-            _rho = np.mean(np.concatenate(self.Hx_WxList[1:],axis=0))
             
+            # Compute the control coefficients beta
+            fx = np.concatenate(self.hList[1:], axis=0)
+            px = np.concatenate(self.pxList[1:], axis=0)
+            qx = np.concatenate(self.qxList[1:], axis=0)
+            beta = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
+            
+        beta,_qx,qx_alpha = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
+            
+        _rho = np.mean((fx * px - _qx @ beta)/qx_alpha) + np.sum(beta)    
+        
         return _rho
-    
-    def cic(self,params):
-        """
-        Compute the cross-entropy information criterion (CIC) defined in equation 3.13 
-        of the paper. This is a more general implementation which does not specify
-        the relationship between eta and theta.
-    
-        Parameters
-        ----------
-        params : GMMParams
-            Params for which CIC is computed.
-        
-        Returns
-        -------
-        _cic : float
-            The CIC.
-    
-        """
-        X = np.concatenate(self.X,axis=0)
-        
-        # Compute dimension of model parameter space from the number of mixtures, k
-        k = params.k()
-        p = X.shape[1]
-        d = (k-1)+k*(p+p*(p+1)/2)
-        
-        _cic = self.c_bar(params) + self.rho()*d/X.shape[0]
-
-        return _cic
-    
-    def r(self,x):
-        
-        # Run simulation
-        h_x = self.h(x)
-        
-        # Compute probability of contingency vector given current parameters
-        density = self.p(x)
-        
-        return h_x*density
-    
-    def q(self,params):
-        """
-        Get a function for computing the density of the current 
-        parametric estimate of the importance sampling distribution.
-    
-        Parameters
-        ----------
-        params : GMMParams
-            parameters of the parametric estimate
-    
-        Returns
-        -------
-        q : function
-            The density function.
-    
-        """
-        
-        alpha,mu,sigma = params.get()
-        
-        def _q(X):
-            
-            # Concatenate samples from each stage to a single numpy array
-            if type(X) is list:
-                _X = np.concatenate(X,axis=0)
-            else:
-                _X = X
-                
-            _alpha = np.tile(alpha,(_X.shape[0],1))
-            
-            # Compute density at each observation
-            densities = np.zeros(shape=(_X.shape[0],params.k()))
-            for j in range(params.k()):
-                densities[:,j] = stat.multivariate_normal.pdf(_X,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
-            
-            densities = np.expand_dims(np.sum(np.exp(np.log(_alpha) + np.log(densities)),axis=1),axis=1)
-            
-            return densities
-        
-        return _q
-    
-    def log_q(self,params):
-        """
-        Get a function for computing the density of the current 
-        parametric estimate of the importance sampling distribution.
-    
-        Parameters
-        ----------
-        params : GMMParams
-            parameters of the parametric estimate
-    
-        Returns
-        -------
-        q : function
-            The density function.
-    
-        """
-        
-        alpha,mu,sigma = params.get()
-        
-        def _log_q(X):
-        
-            if type(X) is list:
-                _X = np.concatenate(X,axis=0)
-            else:
-                _X = X
-                
-            _alpha = np.tile(alpha,(X.shape[0],1))
-            
-            # Compute density at each observation
-            log_densities = np.zeros(shape=(_X.shape[0],params.k()))
-            for j in range(params.k()):
-                log_densities[:,j] = stat.multivariate_normal.logpdf(_X,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
-            
-            log_densities = np.expand_dims(spc.logsumexp(np.log(_alpha)+log_densities,axis=1),axis=1)
-            
-            return log_densities
-        
-        return _log_q
     
     def generateX(self,params,num=1):
         """
@@ -385,119 +221,30 @@ class CEM:
             Contingency vector(s).
     
         """
-        # Randomly choose the mixture components to generate from
-        alpha,mu,sigma = params.get()
-        if params.k() > 1:
-            try:
-                mixtureComponents = np.random.choice(np.array(range(params.k())),size=(num,),p=alpha.squeeze().astype(np.float64))
-            except Exception as e:
-                print(alpha.squeeze())
-                print(np.sum(alpha.squeeze()))
-                raise e
+        if params is None:
+            x = self.samplingOracle(num)
+            
         else:
-            mixtureComponents = np.zeros(shape=(num,)).astype(int)
-    
-        # Generate the vectors from the mixture components
-        x = np.zeros(shape=(num,self.dim))
-        for i,mixtureComponent in enumerate(mixtureComponents):
-            _mu = mu[mixtureComponent,:]
-            _sigma = sigma[mixtureComponent,:,:]
-            x[i,:] = np.random.RandomState().multivariate_normal(_mu,_sigma)
+            # Randomly choose the mixture components to generate from
+            alpha,mu,sigma = params.get()
+            if params.k() > 1:
+                try:
+                    mixtureComponents = np.random.choice(np.array(range(params.k())),size=(num,),p=alpha.squeeze().astype(np.float64))
+                except Exception as e:
+                    print(alpha.squeeze())
+                    print(np.sum(alpha.squeeze()))
+                    raise e
+            else:
+                mixtureComponents = np.zeros(shape=(num,)).astype(int)
+        
+            # Generate the vectors from the mixture components
+            x = np.zeros(shape=(num,self.dim))
+            for i,mixtureComponent in enumerate(mixtureComponents):
+                _mu = mu[mixtureComponent,:]
+                _sigma = sigma[mixtureComponent,:,:]
+                x[i,:] = np.random.RandomState().multivariate_normal(_mu,_sigma)
         
         return x.astype(np.longdouble)
-    
-    def expectation(self,x,q,params):
-        """
-        Expectation step of EM algorithm.
-    
-        Parameters
-        ----------
-        x : numpy array
-            Sampled data from GMM.
-        q : function
-            The density function for the GMM        
-        params : GMMParams
-            GMM params.
-    
-        Returns
-        -------
-        gamma : numpy array.
-            
-        """
-        # Tile and reshape arrays for vectorized computation
-        alpha,mu,sigma = params.get()
-        _log_alpha = np.tile(np.log(alpha),(x.shape[0],1))
-        
-        # Compute density at each observation
-        log_densities = np.zeros(shape=(x.shape[0],params.k()))
-        for j in range(params.k()):
-            try:
-                log_densities[:,j] = stat.multivariate_normal.logpdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
-            except Exception as e:
-                print(sigma[j,:])
-                raise(e)
-                
-        log_alpha_q = _log_alpha + log_densities
-
-        log_density = np.expand_dims(spc.logsumexp(log_alpha_q,axis=1),axis=1)
-        _log_density = np.tile(log_density,(1,params.k()))
-        
-        gamma = np.exp(log_alpha_q - _log_density)
-        
-        # For each i (observation), summing gamma over j should give 1
-        try:
-            err = np.abs(np.sum(gamma,axis=1)-1)
-            assert(np.all(err<1e-3))
-        except Exception as e:
-            print(params.k())
-            print('Gammas don\'t sum to one for at least one observation!')
-            raise e
-        
-        return gamma
-    
-    def log_expectation(self,x,q,params):
-        """
-        Expectation step of EM algorithm. Returns log of gamma.
-    
-        Parameters
-        ----------
-        x : numpy array
-            Sampled data from GMM.
-        q : function
-            The density function for the GMM        
-        params : GMMParams
-            GMM params.
-    
-        Returns
-        -------
-        gamma : numpy array.
-            
-        """
-        # Tile and reshape arrays for vectorized computation
-        alpha,mu,sigma = params.get()
-        _log_alpha = np.tile(np.log(alpha),(x.shape[0],1))
-        
-        # Compute density at each observation
-        log_densities = np.zeros(shape=(x.shape[0],params.k()))
-        for j in range(params.k()):
-            try:
-                log_densities[:,j] = stat.multivariate_normal.logpdf(x,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
-            except Exception as e:
-                print(sigma[j,:])
-                raise(e)
-                
-        log_alpha_q = _log_alpha + log_densities
-
-        log_density = np.expand_dims(spc.logsumexp(log_alpha_q,axis=1),axis=1)
-        _log_density = np.tile(log_density,(1,params.k()))
-        
-        log_gamma = log_alpha_q - _log_density
-        
-        # Check that nothing weird happened
-        assert(not np.any(np.isnan(log_gamma)))
-        assert(not np.any(np.isinf(log_gamma)))
-        
-        return log_gamma
     
     def emIteration(self,params):
         """
@@ -542,7 +289,7 @@ class CEM:
         r_div_q_gamma[nzi] = np.exp( np.log(r_div_q[nzi]) + log_gamma[nzi] )
         
         # Compute new alpha, mu
-        # TODO: Adjust how alpha is computed so no mixture components go to zero. May
+        # TODO: Adjust how alpha is computed so no mixture components go to zero.
         alpha = np.exp(np.log(np.sum(r_div_q_gamma,axis=0)) - np.log(np.sum(r_div_q)))
         
         # Check that the mixing proportions sum to 1
@@ -552,6 +299,11 @@ class CEM:
             if self.log:
                 logging.warning('alpha computed during M step does not sum to one! Normalizing alpha...')
             alpha = alpha/np.sum(alpha)
+        
+        # Check that no mixture components have zero weight
+        if np.any(alpha==0):
+            # If this happens, return a -1 for alpha to indicate an error
+            return -1,None,None
         
         # Check that there is no inf/nan values
         try:
@@ -688,6 +440,15 @@ class CEM:
             # Perform a single EM iteration
             alpha,mu,sigma = self.emIteration(params)
             
+            # Check if the EM iteration resulted in alpha=0
+            if type(alpha)!=np.ndarray:
+                if alpha == -1:
+                
+                    if retCE:
+                        return -1,None
+                    else:
+                        return -1
+            
             # Check to make sure that the new covar matrices are well-conditioned
             condNum = np.linalg.cond(sigma.astype(np.float64))
             if np.any(condNum>condThresh):
@@ -722,145 +483,6 @@ class CEM:
             return params
         else:
             return params,ce
-        
-    def sampleInitParams(self,stage,numInitParams,k,dim=None):
-        """
-        Get the initial params used to fit the GMM using EM.
-
-        Parameters
-        ----------
-        stage : int
-            The stage of the CEM procedure.
-        numInitParams : int
-            The number of initial params to create.
-        k : int
-            The number of components in each GMM.
-        dim : int
-            The dimension of the MVG dist. used to create the GMM. Must be specified if stage==0
-
-        Returns
-        -------
-        initParamsList : List
-            The list of all intial params generated.
-
-        """
-        initParamsList = []
-        
-        # At stage zero, randomly choose all GMM params by drawing from standard MVG dist.
-        if stage==0:
-            
-            try:
-                assert(dim is not None)
-            except Exception as e:
-                print('Dim must be defined for creating initial params in the first stage!')
-                raise e
-                
-            for i in range(numInitParams):
-                # Initial guess for GMM params
-                alpha0 = np.ones(shape=(k,))/k
-                
-                # Randomly intialize the means of the Gaussian mixture components
-                mu0 = np.random.multivariate_normal(np.zeros(dim),
-                                                    np.eye(dim),
-                                                    size=k)
-                
-                # Set covariance matrix to be identity
-                sigma0 = 3 * np.repeat(np.eye(dim)[None,:,:],k,axis=0)
-                params = GMMParams(alpha0, mu0, sigma0, dim)
-                
-                initParamsList.append(params)
-        
-        # If stage > 0, we create half of init params from MVG and half of init params by sampling from observations from s=1,...,t
-        else:
-            
-            # Get indices where Hx>0
-            posInd = np.where(np.concatenate(self.hList,axis=0))[0]
-            zeroInd = np.where(1-np.concatenate(self.hList,axis=0))[0]
-            X = np.concatenate(self.X,axis=0)
-            
-            # Get half of init params by sampling from the MVG
-            numMVGParams = 0 #numInitParams//2
-            
-            try:
-                assert(dim is not None)
-            except Exception as e:
-                print('Dim must be defined for creating initial params!')
-                raise e
-                
-            for i in range(numMVGParams):
-                # Initial guess for GMM params
-                alpha0 = np.ones(shape=(k,))/k
-                
-                # The mean for the MVG is chosen to be the mean of all observations where h>0
-                selectedData = X[posInd,:]
-                # print('shape of mean of event data: {}'.format(selectedData.shape))
-                muPosH = np.mean(selectedData,axis=0)
-                
-                # Make sure nothing funny happened when computing this mean
-                try:
-                    assert(muPosH.shape[0]==self.X.shape[-1])
-                except Exception as e:
-                    print('Computing mean observation failed somehow!')
-                    if self.log:
-                        logging.ERROR('Computing mean observation failed somehow!')
-                    raise e
-                
-                # Randomly intialize the means of the Gaussian mixture components
-                mu0 = np.random.multivariate_normal(muPosH,
-                                                    np.eye(dim),
-                                                    size=k)
-                
-                # Set covariance matrix to be identity
-                sigma0 = 3 * np.repeat(np.eye(dim)[None,:,:],k,axis=0)
-                params = GMMParams(alpha0, mu0, sigma0, dim)
-                
-                initParamsList.append(params)
-              
-            # For the remaining initParams, randomly select k samples w/o replacement. Prefer positive entropy samples.
-            numChoices = posInd.shape[0]
-            for i in range(numInitParams-numMVGParams):
-                
-                if numChoices>0:
-                    choice = np.random.choice(range(numChoices),size=min(k,numChoices),replace=False).astype(int)
-                    chosenInd = list(posInd[choice])
-                else:
-                    chosenInd = []
-                
-                # If there was not enough samples w/ positive entropy, draw some with 0 entropy
-                if len(chosenInd) < k:
-                    
-                    # Randomly select remaining needed samples w/o replacement
-                    choice = np.random.choice(range(len(zeroInd)),size=k-len(chosenInd),replace=False).astype(int)
-                    chosenInd.append(zeroInd[choice])
-                    
-                chosenInd = np.array(chosenInd).astype(int)
-                    
-                # Create XBar matrix by concatenating the data vectors
-                # Get the sampled data
-                XBar = X[chosenInd,:]
-                
-                # Compute covar matrix for GMM params
-                p = X.shape[-1]
-                covar = np.cov(XBar,rowvar=False)
-                tr = np.trace(covar) if len(covar.shape)>0 else covar
-                covar = 3/p*tr*np.eye(p) + np.eye(p) * self.covar_regularization
-                
-                # check that we are not somehow outputting zero matrix
-                try:
-                    assert(not np.all(covar==0))
-                except:
-                    print('oops!')
-                
-                covar = np.tile(np.expand_dims(covar,axis=0),(k,1,1))
-                
-                # Create GMMParams object and add to list
-                initParams  = GMMParams(np.ones(k)/k, XBar, covar, p)
-                initParamsList.append(initParams)
-            
-            
-            
-        return initParamsList
-     
     
     def runStage(self,s,params,kMin,kMax=30,numInitParams=10):
         """
@@ -902,10 +524,20 @@ class CEM:
         windowSize=4
         
         # Draw samples from previous best GMMParams
+        # TODO : draw some samples from nominal density instead as per paper
         if not self.variableSampleSizes:
-            x = self.generateX(params,self.sampleSize)
+            nSamples = self.sampleSize
+            
         else:
-            x = self.generateX(params,self.sampleSize[s])
+            nSamples = self.sampleSize[s]
+            
+        nominalSamples = int(np.ceil(nSamples * self.alpha))
+        gmmSamples = nSamples - nominalSamples
+        
+        xNominal = self.generateX(None,nominalSamples)
+        xGmm = self.generateX(params,gmmSamples)
+        
+        x = np.concatenate([xNominal,xGmm],axis=0)
         
         # Add new samples to existing samples
         if s==0:
@@ -922,7 +554,8 @@ class CEM:
             # Get likelihood ratio
             log_q_theta = self.log_q(params)
             log_px = self.p(x) # this actually computes the log density
-            Wx = np.exp(log_px - log_q_theta(x))
+            log_qx = log_q_theta(x)
+            Wx = np.exp(log_px - log_qx)
             
             r_x = Hx * np.exp(log_px)
             
@@ -935,6 +568,8 @@ class CEM:
                 logging.error('Error during r(x): {}'.format(str(e)))
             raise e
             
+        self.pxList.append(np.exp(log_px))
+        self.qxList.append(np.exp(log_qx))
         self.rList.append(r_x)
         self.hList.append(Hx)
         self.Hx_WxList.append(Hx_Wx)
@@ -969,13 +604,19 @@ class CEM:
                     if self.log:
                         logging.error('Error while updating params: {}'.format(str(e)))
                     raise e
+                    
+                # If the EM got one or more mixtures equal to zero, break out of the loop
+                if updatedParams == -1:
+                    kTooBig = True
+                    break
             
                 updatedParamsList.append(updatedParams)
                 # If ce is None, then EM was terminated. Set ce to infinity.
                 ceArray[i] = ce if ce is not None else np.inf
                 
             # Check to see if more than 50% of EM trial were terminated or CIC moving avg is increasing
-            kTooBig = np.sum(ceArray==np.inf)>(numInitParams//2)
+            if not kTooBig:
+                kTooBig = np.sum(ceArray==np.inf)>(numInitParams//2)
             
             # If k is too big and k > kMin, stop increasing k and return
             if kTooBig and k > kMin:
@@ -1090,130 +731,3 @@ class CEM:
             raise e
         
         return bestParamsList,cicList,cicMA
-    
-    def run(self):
-        self._results = self._run(self.initParams,self.p,self.h)
-    
-    def _run(self,initParams,p,h):
-        """
-        Run the CEM algorithm.
-
-        Parameters
-        ----------
-        initParams : TYPE
-            DESCRIPTION.
-        p : TYPE
-            DESCRIPTION.
-        h : TYPE
-            DESCRIPTION.
-
-        Raises
-        ------
-        e
-            DESCRIPTION.
-
-        Returns
-        -------
-        cicArray : TYPE
-            DESCRIPTION.
-        paramsList : TYPE
-            DESCRIPTION.
-        X : TYPE
-            DESCRIPTION.
-
-        """
-        
-        # Reset params list
-        self.paramsList = [self.initParams,]
-        self.cicArray = np.zeros(shape=(self.numIters,1))
-        
-        self.timestamp = dttm.datetime.now().strftime('%m%d%Y_%H%M%S')
-        # Create log file
-        if self.log:
-            logging.basicConfig(filename='experiment_{}.log'.format(self.timestamp),
-                        level=logging.INFO)
-        
-        # Loop for executing the algorithm
-        for s in range(self.numIters):
-            
-            if self.verbose:
-                print('Beginning Stage s={}'.format(s))
-            
-            # Determine kMin
-            if s<=1:
-                kMin = 1
-            else:
-                kMin = max(1,self.paramsList[-1].k()-3)
-            
-            try:
-                # Run the main operations of the stage
-                bestParamsByK,cicByK,cicMA = self.runStage(s, self.paramsList[s], kMin)
-            except Exception as e:
-                print('Error during runStage: {}'.format(str(e)))
-                if self.log:
-                    print('Aborting replication {} due to error!'.format(__name__))
-                    logging.error(str(e))
-                # Write out the CEM object for diagnosing the error
-                self.write()
-                raise e
-            
-            # Record the best params and cic arrays
-            self.bestParamsLists.append(bestParamsByK)
-            self.cicLists.append(cicByK)
-            
-            # Select the best params from the stage by minimizing CIC
-            bestInd = np.argmin(cicByK)
-            bestParams = bestParamsByK[bestInd]
-            
-            # Add new params to the list
-            self.paramsList.append(bestParams)
-                
-            self.cicArray[s] = cicByK[bestInd]
-    
-        return self.cicArray,self.paramsList,self.X
-       
-    def getResults(self):
-        return self._results
-    
-    def writeResults(self,filename=None):
-        
-        if filename is None:
-            filename = 'results_{}.pck'.format(self.timestamp)
-        
-        else:
-            # Check that the file has .pck extension
-            try:
-                assert(filename.split(os.path.extsep)[-1]=='pck')
-            except Exception as e:
-                print('Use the file extension {}pck for storing results!'.format(os.path.extsep))
-                raise e
-        
-        results = self.getResults()
-        with open(filename,'wb') as f:
-            pck.dump(results,f)
-            
-        return filename
-            
-    def write(self,filename=None,error=False):
-    
-        if filename is None:
-            if error:
-                filename = 'CEM_{}_ERROR.pck'.format(self.timestamp)
-            else:
-                filename = 'CEM_{}.pck'.format(self.timestamp)
-            
-        else:
-            # Check that the file has .pck extension
-            try:
-                assert(filename.split(os.path.extsep)[-1]=='pck')
-            except Exception as e:
-                print('Use the file extension {}pck for storing CEM!'.format(os.path.extsep))
-                raise e
-        
-        with open(filename,'wb') as f:
-            _self = copy.deepcopy(self)
-            _self.p = None
-            _self.h = None
-            pck.dump(_self,f)   
-            
-        return filename
