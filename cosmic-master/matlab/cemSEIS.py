@@ -196,7 +196,6 @@ class CEMSEIS(cem.CEM):
             fx = np.concatenate(self.hList[1:], axis=0)
             px = np.concatenate(self.pxList[1:], axis=0)
             qx = np.concatenate(self.qxList[1:], axis=0)
-            beta = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
             
         beta,_qx,qx_alpha = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
             
@@ -271,7 +270,7 @@ class CEMSEIS(cem.CEM):
         # gamma = self.expectation(X, q, params)
         # Added small amount of regularization here to prevent a component having alpha=0
         # TODO: See if there is a better solution to this
-        log_gamma =  self.log_expectation(X, q, params) + self.covar_regularization
+        log_gamma =  self.log_expectation(X, q, params) #+ self.covar_regularization
         
         r_div_q = np.concatenate(self.Hx_WxList,axis=0)
         
@@ -290,7 +289,19 @@ class CEMSEIS(cem.CEM):
         
         # Compute new alpha, mu
         # TODO: Adjust how alpha is computed so no mixture components go to zero.
-        alpha = np.exp(np.log(np.sum(r_div_q_gamma,axis=0)) - np.log(np.sum(r_div_q)))
+        _sum_r_div_q_gamma = np.sum(r_div_q_gamma,axis=0)
+        _sum_r_div_q = np.sum(r_div_q)
+        
+        if np.any(_sum_r_div_q_gamma==0):
+            # print('zeros in r_div_q_gamma!')
+            # print('k={}'.format(params.k()))
+            # print(_sum_r_div_q_gamma)
+            # raise Exception
+            
+            # If this happens, return a -1 for alpha to indicate an error
+            return -1,None,None
+            
+        alpha = np.exp(np.log(_sum_r_div_q_gamma) - np.log(_sum_r_div_q))
         
         # Check that the mixing proportions sum to 1
         try:
@@ -404,6 +415,8 @@ class CEMSEIS(cem.CEM):
                 assert(np.linalg.det(sigma[i].astype(np.float64))!=0)
         except Exception as e:
             print('Floating point error while computing sigma!')
+            for i in range(sigma.shape[0]):
+                print(sigma[i])
             raise e   
          
         return alpha,mu,sigma
@@ -555,21 +568,34 @@ class CEMSEIS(cem.CEM):
             log_q_theta = self.log_q(params)
             log_px = self.p(x) # this actually computes the log density
             log_qx = log_q_theta(x)
+            
+            self.pxList.append(np.exp(log_px))
+            self.qxList.append(np.exp(log_qx))
+            
+            # TODO: Should leave this in log form
             Wx = np.exp(log_px - log_qx)
+            
+            try:
+                assert(not np.any(Wx==np.inf))
+            except:
+                print('Overflow in exponential!')
+                print(np.max(log_px - log_qx))
+                raise Exception
             
             r_x = Hx * np.exp(log_px)
             
             # This computation involves multiplying a likelihood ratio by 0 or 1. 
             # Shouldn't be any numerical issues here.
+
             Hx_Wx = Hx * Wx
+            # _,_,qx_alpha = defensiveIS.getBeta2Mix(Hx,self.pxList[-1],self.qxList[-1],self.alpha)
+            # Hx_Wx = np.exp(np.log(self.pxList[-1])-np.log(qx_alpha))
             
         except Exception as e:
             if self.log:
                 logging.error('Error during r(x): {}'.format(str(e)))
-            raise e
-            
-        self.pxList.append(np.exp(log_px))
-        self.qxList.append(np.exp(log_qx))
+            raise e         
+
         self.rList.append(r_x)
         self.hList.append(Hx)
         self.Hx_WxList.append(Hx_Wx)

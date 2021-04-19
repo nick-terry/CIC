@@ -36,12 +36,55 @@ def getBeta(fx,px,qx,alpha):
 
     """
     
-    # Compute mixture likelihoods
-    qx_alpha = np.sum(alpha[None,:] * qx, axis=1, keepdims=True)
+    # Check that we have not mixture components equal to zero
+    try:
+        assert(not np.any(alpha==0))
+    except Exception as e:
+        print('Bad alpha in SEIS!')
+        print(alpha)
+        raise e
     
     # Compute design matrix for regression
-    X = np.exp(np.log(qx) - np.log(qx_alpha))
+    
+    # Compute where we have at least one component with non-zero likelihood
+    # nzi = np.sum(qx>0,axis=1,keepdims=True)
+    nzi = np.bitwise_or.reduce(qx>0,axis=1)
+    
+    # Compute mixture likelihoods
+    with np.errstate(divide='ignore'):
+        tmp = np.exp(np.log(alpha[None,:]) + np.log(qx))
+    
+    tmp[np.isneginf(tmp)] = 0
+    qx_alpha = np.sum(tmp, axis=1, keepdims=True)
+    
+    # Check that qx_alpha computation didn't produce any NaN/inf values
+    try:
+        assert(not np.any(np.isnan(qx_alpha)))
+        assert(not np.any(np.isinf(qx_alpha)))
+    except Exception as e:
+        print('Bad qx_alpha in SEIS!')
+        print(qx_alpha)
+        raise e
+    
+    try:
+        assert(not np.any(np.bitwise_and.reduce(qx[nzi]==0,axis=1)))
+    except Exception as e:
+        print('Non-zero indices not working for qx!')
+        raise e
+    
+    try:
+        assert(not np.any(qx_alpha[nzi]==0))
+    except Exception as e:
+        print('Non-zero indices not working for qx_alpha!')
+        print(alpha)
+        raise e
+    
+    X = np.zeros_like(qx)
+    X[nzi] = np.exp(np.log(qx[nzi]) - np.log(qx_alpha[nzi]))
     y = fx * np.exp(np.log(px) - np.log(qx_alpha))
+    
+    # X = np.exp(np.log(qx) - np.log(qx_alpha))
+    # y = fx * np.exp(np.log(px) - np.log(qx_alpha))
     
     # Perform SVD on X to compute regression coefficients
     # U,S,V = np.linalg.svd(X)

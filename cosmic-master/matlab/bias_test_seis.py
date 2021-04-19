@@ -58,7 +58,7 @@ def samplingOracle(n):
 
     """
     
-    x = stat.multivariate_normal.rvs(np.zeros((3,)),cov=np.eye(3),size=n)
+    x = stat.multivariate_normal.rvs(np.zeros((2,)),cov=np.eye(2),size=n)
     
     return x
 
@@ -67,7 +67,7 @@ def runReplicate(seed):
     # Create a SimulationEngine for evaluating h(x)
     #sim = se.SimulationEngine()
     # dataDim = sim.numBranches
-    dataDim = 3
+    dataDim = 2
     
     def h(x):
         

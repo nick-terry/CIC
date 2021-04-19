@@ -831,9 +831,17 @@ class CEM:
                     
                     # Randomly select remaining needed samples w/o replacement
                     choice = np.random.choice(range(len(zeroInd)),size=k-len(chosenInd),replace=False).astype(int)
-                    chosenInd.append(zeroInd[choice])
                     
-                chosenInd = np.array(chosenInd).astype(int)
+                    if zeroInd[choice].size == 1:
+                        chosenInd.append(zeroInd[choice])
+                    else:
+                        chosenInd += list(zeroInd[choice])
+                    
+                try:
+                    chosenInd = np.array(chosenInd).astype(int)
+                except Exception as e:
+                    print(chosenInd)
+                    raise e
                     
                 # Create XBar matrix by concatenating the data vectors
                 # Get the sampled data
