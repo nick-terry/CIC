@@ -268,8 +268,9 @@ class CEMSEIS(cem.CEM):
         
         # To make this code (slightly) more readable
 
-        X,q = np.concatenate(self.X_gmm,axis=0),self.q
-         
+        # X,q = np.concatenate(self.X_gmm,axis=0),self.q
+        X,q = np.concatenate(self.X,axis=0),self.q
+        
         # gamma = self.expectation(X, q, params)
         # Added small amount of regularization here to prevent a component having alpha=0
         log_gamma =  self.log_expectation(X, q, params) #+ self.covar_regularization
@@ -488,7 +489,8 @@ class CEMSEIS(cem.CEM):
             params.update(alpha,mu,sigma)
             
             # Compute cross-entropy for the updated params
-            ce = self.c_bar(params,gmm=True)
+            # ce = self.c_bar(params,gmm=True)
+            ce = self.c_bar(params,gmm=False)
             
             # Compute the change in cross-entropy
             converged = (ce_old - ce) < eps*np.abs(ce_old)
@@ -578,7 +580,8 @@ class CEMSEIS(cem.CEM):
             self.qxList.append(np.exp(log_qx))
             
             gmmStIndex = int(np.ceil(nSamples * self.alpha))
-            log_Wx = log_px[gmmStIndex:] - log_qx[gmmStIndex:]
+            # log_Wx = log_px[gmmStIndex:] - log_qx[gmmStIndex:]
+            log_Wx = log_px - log_qx
             
             # try:
             #     assert(not np.any(Wx==np.inf))
@@ -595,7 +598,9 @@ class CEMSEIS(cem.CEM):
             # Need to catch warnings here because we may take a log of zero
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                log_Hx_Wx = np.log(Hx[gmmStIndex:]) + log_Wx
+                # log_Hx_Wx = np.log(Hx[gmmStIndex:]) + log_Wx
+                log_Hx_Wx = np.log(Hx) + log_Wx
+                
             # _,_,qx_alpha = defensiveIS.getBeta2Mix(Hx,self.pxList[-1],self.qxList[-1],self.alpha)
             # Hx_Wx = np.exp(np.log(self.pxList[-1])-np.log(qx_alpha))
             
