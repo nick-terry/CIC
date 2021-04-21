@@ -12,6 +12,7 @@ import numpy as np
 import multiprocessing as mp
 import csv
 import pickle
+import warnings
 
 # Import cem test version (stored locally, NOT a package!)
 import cemSEIS as cem

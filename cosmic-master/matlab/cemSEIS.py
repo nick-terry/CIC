@@ -7,6 +7,8 @@ Created on Fri Feb 26 18:19:04 2021
 """
 import numpy as np
 import logging
+from scipy.special import logsumexp
+import warnings
 
 import cem
 import defensiveIS
@@ -265,18 +267,18 @@ class CEMSEIS(cem.CEM):
         covar_regularization = self.covar_regularization #Add ridge to covar matrix to prevent numerical instability
         
         # To make this code (slightly) more readable
-        X,q = np.concatenate(self.X,axis=0),self.q
+
+        X,q = np.concatenate(self.X_gmm,axis=0),self.q
          
         # gamma = self.expectation(X, q, params)
         # Added small amount of regularization here to prevent a component having alpha=0
-        # TODO: See if there is a better solution to this
         log_gamma =  self.log_expectation(X, q, params) #+ self.covar_regularization
         
-        r_div_q = np.concatenate(self.Hx_WxList,axis=0)
+        log_r_div_q = np.concatenate(self.Hx_WxList,axis=0)
         
         # We need to avoid taking log of zero entries here
-        r_div_q_gamma = np.zeros_like(log_gamma)
-        nzi = np.squeeze(r_div_q>0) 
+        # r_div_q_gamma = np.zeros_like(log_gamma)
+        # nzi = np.squeeze(r_div_q>0) 
         
         # try:
         #     assert(np.all(gamma[nzi]>0))
@@ -285,14 +287,15 @@ class CEMSEIS(cem.CEM):
         #     raise e
         
         # This works since multiplying by the zero entries still yields zero
-        r_div_q_gamma[nzi] = np.exp( np.log(r_div_q[nzi]) + log_gamma[nzi] )
+        # r_div_q_gamma[nzi] = np.exp( np.log(r_div_q[nzi]) + log_gamma[nzi] )
+        log_r_div_q_gamma = log_r_div_q + log_gamma
+        r_div_q_gamma = np.exp(log_r_div_q_gamma)
         
         # Compute new alpha, mu
-        # TODO: Adjust how alpha is computed so no mixture components go to zero.
-        _sum_r_div_q_gamma = np.sum(r_div_q_gamma,axis=0)
-        _sum_r_div_q = np.sum(r_div_q)
+        log_sum_r_div_q_gamma = logsumexp(log_r_div_q_gamma,axis=0)
+        log_sum_r_div_q = logsumexp(log_r_div_q)
         
-        if np.any(_sum_r_div_q_gamma==0):
+        if np.any(log_sum_r_div_q_gamma==-np.inf):
             # print('zeros in r_div_q_gamma!')
             # print('k={}'.format(params.k()))
             # print(_sum_r_div_q_gamma)
@@ -301,7 +304,7 @@ class CEMSEIS(cem.CEM):
             # If this happens, return a -1 for alpha to indicate an error
             return -1,None,None
             
-        alpha = np.exp(np.log(_sum_r_div_q_gamma) - np.log(_sum_r_div_q))
+        alpha = np.exp(log_sum_r_div_q_gamma - log_sum_r_div_q)
         
         # Check that the mixing proportions sum to 1
         try:
@@ -485,7 +488,7 @@ class CEMSEIS(cem.CEM):
             params.update(alpha,mu,sigma)
             
             # Compute cross-entropy for the updated params
-            ce = self.c_bar(params)
+            ce = self.c_bar(params,gmm=True)
             
             # Compute the change in cross-entropy
             converged = (ce_old - ce) < eps*np.abs(ce_old)
@@ -555,8 +558,10 @@ class CEMSEIS(cem.CEM):
         # Add new samples to existing samples
         if s==0:
             self.X = [x,]
+            self.X_gmm = [xGmm,]
         else:
             self.X.append(x)
+            self.X_gmm.append(xGmm)
         
         # Run simulation and compute likelihood ratio
         try:
@@ -572,22 +577,25 @@ class CEMSEIS(cem.CEM):
             self.pxList.append(np.exp(log_px))
             self.qxList.append(np.exp(log_qx))
             
-            # TODO: Should leave this in log form
-            Wx = np.exp(log_px - log_qx)
+            gmmStIndex = int(np.ceil(nSamples * self.alpha))
+            log_Wx = log_px[gmmStIndex:] - log_qx[gmmStIndex:]
             
-            try:
-                assert(not np.any(Wx==np.inf))
-            except:
-                print('Overflow in exponential!')
-                print(np.max(log_px - log_qx))
-                raise Exception
+            # try:
+            #     assert(not np.any(Wx==np.inf))
+            # except:
+            #     print('Overflow in exponential!')
+            #     print(np.max(log_px - log_qx))
+            #     raise Exception
             
             r_x = Hx * np.exp(log_px)
             
             # This computation involves multiplying a likelihood ratio by 0 or 1. 
             # Shouldn't be any numerical issues here.
-
-            Hx_Wx = Hx * Wx
+            
+            # Need to catch warnings here because we may take a log of zero
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                log_Hx_Wx = np.log(Hx[gmmStIndex:]) + log_Wx
             # _,_,qx_alpha = defensiveIS.getBeta2Mix(Hx,self.pxList[-1],self.qxList[-1],self.alpha)
             # Hx_Wx = np.exp(np.log(self.pxList[-1])-np.log(qx_alpha))
             
@@ -598,7 +606,7 @@ class CEMSEIS(cem.CEM):
 
         self.rList.append(r_x)
         self.hList.append(Hx)
-        self.Hx_WxList.append(Hx_Wx)
+        self.Hx_WxList.append(log_Hx_Wx)
         
         bestParamsList = []
         cicList = []

@@ -188,7 +188,7 @@ class CEM:
         vectorized = lambda x : np.apply_along_axis(densityFn, axis=0, arr=x)
         return vectorized
     
-    def c_bar(self,params):
+    def c_bar(self,params,gmm=True):
         """
         Estimate the cross-entropy from the importance sampling
         distribution defined by eta, using the estimator from equation 3.7 of
@@ -206,12 +206,16 @@ class CEM:
             The estimated cross-entropy.
     
         """
-        
-        X = np.concatenate(self.X,axis=0)
+        if not gmm:
+            X = np.concatenate(self.X,axis=0)
+        else:
+            X = np.concatenate(self.X_gmm,axis=0)
+            
         log_q_theta = self.log_q(params)
         llh = log_q_theta(X)
         
-        _c_bar = -np.mean(llh * np.concatenate(self.Hx_WxList))
+        n = llh.shape[0]
+        _c_bar = np.log(1/n)-spc.logsumexp(llh + np.concatenate(self.Hx_WxList))
         
         return _c_bar
     

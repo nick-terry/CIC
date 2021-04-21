@@ -8,6 +8,7 @@ Created on Fri Feb 26 15:42:41 2021
 
 import numpy as np
 import scipy.linalg as la
+import warnings
 
 '''
 Implementing some methods from the paper Safe and Effective Importance Sampling
@@ -80,7 +81,13 @@ def getBeta(fx,px,qx,alpha):
         raise e
     
     X = np.zeros_like(qx)
-    X[nzi] = np.exp(np.log(qx[nzi]) - np.log(qx_alpha[nzi]))
+    
+    # Need to catch warnings here because we may take a log of zero
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        X[nzi] = np.exp(np.log(qx[nzi]) - np.log(qx_alpha[nzi]))
+    X[X==-np.inf] = 0
+    
     y = fx * np.exp(np.log(px) - np.log(qx_alpha))
     
     # X = np.exp(np.log(qx) - np.log(qx_alpha))
