@@ -9,6 +9,7 @@ Created on Fri Feb 26 15:42:41 2021
 import numpy as np
 import scipy.linalg as la
 import warnings
+from scipy.special import logsumexp
 
 '''
 Implementing some methods from the paper Safe and Effective Importance Sampling
@@ -38,12 +39,12 @@ def getBeta(fx,px,qx,alpha):
     """
     
     # Check that we have not mixture components equal to zero
-    try:
-        assert(not np.any(alpha==0))
-    except Exception as e:
-        print('Bad alpha in SEIS!')
-        print(alpha)
-        raise e
+    # try:
+    #     assert(not np.any(alpha==0))
+    # except Exception as e:
+    #     print('Bad alpha in SEIS!')
+    #     print(alpha)
+    #     raise e
     
     # Compute design matrix for regression
     
@@ -53,42 +54,45 @@ def getBeta(fx,px,qx,alpha):
     
     # Compute mixture likelihoods
     with np.errstate(divide='ignore'):
-        tmp = np.exp(np.log(alpha[None,:]) + np.log(qx))
+        tmp = np.log(alpha[None,:]) + qx
     
     tmp[np.isneginf(tmp)] = 0
-    qx_alpha = np.sum(tmp, axis=1, keepdims=True)
+    # qx_alpha = np.sum(tmp, axis=1, keepdims=True)
+    qx_alpha = logsumexp(tmp,axis=1,keepdims=True)
     
     # Check that qx_alpha computation didn't produce any NaN/inf values
-    try:
-        assert(not np.any(np.isnan(qx_alpha)))
-        assert(not np.any(np.isinf(qx_alpha)))
-    except Exception as e:
-        print('Bad qx_alpha in SEIS!')
-        print(qx_alpha)
-        raise e
+    # try:
+    #     assert(not np.any(np.isnan(qx_alpha)))
+    #     assert(not np.any(np.isinf(qx_alpha)))
+    # except Exception as e:
+    #     print('Bad qx_alpha in SEIS!')
+    #     print(qx_alpha)
+    #     raise e
     
-    try:
-        assert(not np.any(np.bitwise_and.reduce(qx[nzi]==0,axis=1)))
-    except Exception as e:
-        print('Non-zero indices not working for qx!')
-        raise e
+    # try:
+    #     assert(not np.any(np.bitwise_and.reduce(qx[nzi]==0,axis=1)))
+    # except Exception as e:
+    #     print('Non-zero indices not working for qx!')
+    #     raise e
     
-    try:
-        assert(not np.any(qx_alpha[nzi]==0))
-    except Exception as e:
-        print('Non-zero indices not working for qx_alpha!')
-        print(alpha)
-        raise e
+    # try:
+    #     assert(not np.any(qx_alpha[nzi]==0))
+    # except Exception as e:
+    #     print('Non-zero indices not working for qx_alpha!')
+    #     print(alpha)
+    #     raise e
     
-    X = np.zeros_like(qx)
+    # X = np.zeros_like(qx)
     
     # Need to catch warnings here because we may take a log of zero
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        X[nzi] = np.exp(np.log(qx[nzi]) - np.log(qx_alpha[nzi]))
-    X[X==-np.inf] = 0
+    # with warnings.catch_warnings():
+    #     warnings.simplefilter("ignore")
+    #     X[nzi] = np.exp(np.log(qx[nzi]) - np.log(qx_alpha[nzi]))
+    # X[X==-np.inf] = 0
+    X = np.exp(qx - qx_alpha)
     
-    y = fx * np.exp(np.log(px) - np.log(qx_alpha))
+    # y = fx * np.exp(np.log(px) - np.log(qx_alpha))
+    y = fx * np.exp(px - qx_alpha)
     
     # X = np.exp(np.log(qx) - np.log(qx_alpha))
     # y = fx * np.exp(np.log(px) - np.log(qx_alpha))
@@ -115,9 +119,9 @@ def getBeta2Mix(fx,px,qx,alpha):
     fx : np array
         Function being integrated at each x.
     px : np array
-        The nominal density at each x.
+        log of The nominal density at each x.
     qx : np array
-        The proposal density at each x.
+        log of The proposal density at each x.
     alpha : float
         The weight of the nominal density in the mixture.
 

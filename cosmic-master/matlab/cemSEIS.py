@@ -14,6 +14,29 @@ import cem
 import defensiveIS
 import copy
 
+def splitExpSumLog(x,y):
+    """
+    Compute the product of x and exp(y) using log transforms. x is not assumed
+    to be positive
+
+    Parameters
+    ----------
+    x : TYPE
+        DESCRIPTION.
+    y : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    None.
+
+    """
+    posPart = np.ma.log(np.ma.masked_array(x,x<=0)) + y
+    negPart = np.ma.log(np.ma.masked_array(-x,x>=0)) + y
+    product = np.exp(posPart).filled(0) - np.exp(negPart).filled(0)
+    
+    return product,posPart,negPart
+
 class GMMParams:
     
     def __init__(self,alpha,mu,sigma,dataDim):
@@ -97,12 +120,14 @@ class CEMSEIS(cem.CEM):
         self.p = p
         self.samplingOracle = samplingOracle
         self.h = h
-        self.alpha = .1    
+        self.alpha = alpha 
         
         # Store some likelihoods/function evals to avoid recomputing
         self.hList = []
         self.pxList = []
         self.qxList = []
+        self.logpxList = []
+        self.logqxList = []
         
         self.rList = []
         self.Hx_WxList = []
@@ -188,21 +213,44 @@ class CEMSEIS(cem.CEM):
             
             # Compute the control coefficients beta
             fx = np.concatenate(self.hList, axis=0)
-            px = np.concatenate(self.pxList, axis=0)
-            qx = np.concatenate(self.qxList, axis=0)
+            # px = np.concatenate(self.pxList, axis=0)
+            # qx = np.concatenate(self.qxList, axis=0)
+            px = np.concatenate(self.logpxList, axis=0)
+            qx = np.concatenate(self.logqxList, axis=0)
         
         # Otherwise, use cumulative estimate that excludes zeroth stage
         else:
             
             # Compute the control coefficients beta
             fx = np.concatenate(self.hList[1:], axis=0)
-            px = np.concatenate(self.pxList[1:], axis=0)
-            qx = np.concatenate(self.qxList[1:], axis=0)
+            # px = np.concatenate(self.pxList[1:], axis=0)
+            # qx = np.concatenate(self.qxList[1:], axis=0)
+            px = np.concatenate(self.logpxList[1:], axis=0)
+            qx = np.concatenate(self.logqxList[1:], axis=0)
             
         beta,_qx,qx_alpha = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
             
-        _rho = np.mean((fx * px - _qx @ beta)/qx_alpha) + np.sum(beta)    
+        _rho = np.mean((fx * np.exp(px) - np.exp(_qx) @ beta)/np.exp(qx_alpha)) + np.sum(beta)
+        # _rho = np.mean((np.exp(np.log(fx) + px) -\
+        #                 np.exp(_qx + np.log(np.repeat(beta,_qx.shape[0],axis=1)).T))/qx_alpha) + np.sum(beta)
         
+        product,posPart,negPart = splitExpSumLog(np.repeat(beta,_qx.shape[0],axis=1).T, _qx)
+        
+        # with warnings.catch_warnings():
+        #     warnings.simplefilter("ignore")
+        #     # _rho = np.mean((fx * np.exp(px) -\
+        #     #                 (np.exp(posPart-).filled(0)-np.exp(negPart).filled(0)))/qx_alpha) + np.sum(beta)
+                
+        #     _rho = np.mean(fx * np.exp(px-qx_alpha) -\
+        #                     np.sum(np.exp(posPart-qx_alpha).filled(0)-\
+        #                     np.exp(negPart-qx_alpha).filled(0),axis=-1,keepdims=True)) + np.sum(beta)
+    
+        try:
+            assert(not np.isnan(_rho))
+            assert(_rho>=0)
+        except Exception as e:
+            raise e
+            
         return _rho
     
     def generateX(self,params,num=1):
@@ -290,10 +338,10 @@ class CEMSEIS(cem.CEM):
         # This works since multiplying by the zero entries still yields zero
         # r_div_q_gamma[nzi] = np.exp( np.log(r_div_q[nzi]) + log_gamma[nzi] )
         log_r_div_q_gamma = log_r_div_q + log_gamma
-        r_div_q_gamma = np.exp(log_r_div_q_gamma)
+        # r_div_q_gamma = np.exp(log_r_div_q_gamma)
         
         # Compute new alpha, mu
-        log_sum_r_div_q_gamma = logsumexp(log_r_div_q_gamma,axis=0)
+        log_sum_r_div_q_gamma = logsumexp(log_r_div_q_gamma,axis=0,keepdims=True)
         log_sum_r_div_q = logsumexp(log_r_div_q)
         
         if np.any(log_sum_r_div_q_gamma==-np.inf):
@@ -305,7 +353,7 @@ class CEMSEIS(cem.CEM):
             # If this happens, return a -1 for alpha to indicate an error
             return -1,None,None
             
-        alpha = np.exp(log_sum_r_div_q_gamma - log_sum_r_div_q)
+        alpha = np.exp(log_sum_r_div_q_gamma.squeeze(0) - log_sum_r_div_q)
         
         # Check that the mixing proportions sum to 1
         try:
@@ -328,7 +376,15 @@ class CEMSEIS(cem.CEM):
             print('Floating point error while computing alpha!')
             raise e
 
-        mu = np.sum(r_div_q_gamma[:,:,None]*X[:,None,:],axis=0)/np.sum(r_div_q_gamma,axis=0,keepdims=True).T
+        # mu = np.sum(r_div_q_gamma[:,:,None]*X[:,None,:],axis=0)/np.sum(r_div_q_gamma,axis=0,keepdims=True).T
+        
+        product,posPart,negPart = splitExpSumLog(X[:,None,:],log_r_div_q_gamma[:,:,None])
+        try:
+            mu = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                        np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
+        except Exception as e:
+            raise e
+        
         if len(mu.shape)==1:
             mu = mu[None,:]
         
@@ -347,8 +403,18 @@ class CEMSEIS(cem.CEM):
                 diff = X-mu
                 # Compute sigma using a vectorized outer product. 
                 # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
-                sigma = np.sum(r_div_q_gamma[:,:,None]*(diff[:,:,None]*diff[:,None]),axis=0)/\
-                    np.sum(r_div_q_gamma,axis=0) + covar_regularization * np.eye(mu.shape[-1])
+                
+                # sigma = np.sum(r_div_q_gamma[:,:,None]*(diff[:,:,None]*diff[:,None]),axis=0)/\
+                #     np.sum(r_div_q_gamma,axis=0) + covar_regularization * np.eye(mu.shape[-1])
+                
+                product,posPart,negPart = splitExpSumLog((diff[:,:,None]*diff[:,None]),log_r_div_q_gamma[:,:,None])
+                try:
+                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0) +\
+                                covar_regularization * np.eye(mu.shape[-1])
+                except Exception as e:
+                    raise e
+                    
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
             
@@ -357,8 +423,17 @@ class CEMSEIS(cem.CEM):
                 diff = X[:,None,:]-mu
                 # Compute sigma using a vectorized outer product. 
                 # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
-                sigma = np.sum(r_div_q_gamma[:,:,None,None]*(diff[:,:,:,None]*diff[:,:,None]),axis=0)/\
-                    np.sum(r_div_q_gamma,axis=0,keepdims=True).T[:,:,None] + covar_regularization * np.eye(mu.shape[-1])
+                # sigma = np.sum(r_div_q_gamma[:,:,None,None]*(diff[:,:,:,None]*diff[:,:,None]),axis=0)/\
+                #     np.sum(r_div_q_gamma,axis=0,keepdims=True).T[:,:,None] + covar_regularization * np.eye(mu.shape[-1])
+                    
+                product,posPart,negPart = splitExpSumLog((diff[:,:,:,None]*diff[:,:,None]),log_r_div_q_gamma[:,:,:,None])
+                try:
+                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0) +\
+                                covar_regularization * np.eye(mu.shape[-1])
+                except Exception as e:
+                    raise e
+                    
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
                 
@@ -370,9 +445,18 @@ class CEMSEIS(cem.CEM):
                 diff = X-mu
                 # Compute sigma using a vectorized outer product. 
                 # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
-                sigma = np.sum(r_div_q_gamma*np.sum(diff**2,axis=-1,keepdims=True),axis=0)[:,None]/\
-                    np.sum(r_div_q_gamma,axis=0)/X.shape[-1]
-                sigma = (sigma + covar_regularization) * np.eye(X.shape[-1])
+                # sigma = np.sum(r_div_q_gamma*np.sum(diff**2,axis=-1,keepdims=True),axis=0)[:,None]/\
+                #     np.sum(r_div_q_gamma,axis=0)/X.shape[-1]
+                # sigma = (sigma + covar_regularization) * np.eye(X.shape[-1])
+                
+                product,posPart,negPart = splitExpSumLog(np.sum(diff**2,axis=-1,keepdims=True),log_r_div_q_gamma)
+                try:
+                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
+                    sigma = (sigma + covar_regularization) * np.eye(X.shape[-1])
+                except Exception as e:
+                    raise e
+                
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
         
@@ -381,10 +465,22 @@ class CEMSEIS(cem.CEM):
                 diff = X[:,None,:]-mu
                 # Compute sigma using a vectorized outer product. 
                 # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
-                sigma = np.sum(r_div_q_gamma[:,:,None]*np.sum(diff**2,axis=-1,keepdims=True),axis=0)/\
-                    np.sum(r_div_q_gamma,axis=0,keepdims=True).T/X.shape[-1] + covar_regularization
-                sigma = np.repeat(np.repeat(sigma[:,:,None],axis=1,repeats=X.shape[-1]),
-                                  axis=2,repeats=X.shape[-1]) * np.eye(X.shape[-1])
+                # sigma = np.sum(r_div_q_gamma[:,:,None]*np.sum(diff**2,axis=-1,keepdims=True),axis=0)/\
+                #     np.sum(r_div_q_gamma,axis=0,keepdims=True).T/X.shape[-1] + covar_regularization
+                # sigma = np.repeat(np.repeat(sigma[:,:,None],axis=1,repeats=X.shape[-1]),
+                #                   axis=2,repeats=X.shape[-1]) * np.eye(X.shape[-1])
+                
+                product,posPart,negPart = splitExpSumLog(np.sum(diff**2,axis=-1,keepdims=True),log_r_div_q_gamma[:,:,None])
+                try:
+                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0) +\
+                                covar_regularization
+                    sigma = np.repeat(np.repeat(sigma[:,:,None],axis=1,repeats=X.shape[-1]),
+                                axis=2,repeats=X.shape[-1]) * np.eye(X.shape[-1])
+                     
+                except Exception as e:
+                    raise e
+                
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
             
@@ -394,9 +490,19 @@ class CEMSEIS(cem.CEM):
                 diff = X-mu
                 # Compute sigma using a vectorized outer product. 
                 # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
-                sigma = np.sum(r_div_q_gamma * diff**2,axis=0)/\
-                    np.sum(r_div_q_gamma,axis=0)/X.shape[-1]
-                sigma = np.diag(sigma) + covar_regularization * np.eye(X.shape[-1])
+                # sigma = np.sum(r_div_q_gamma * diff**2,axis=0)/\
+                #     np.sum(r_div_q_gamma,axis=0)/X.shape[-1]
+                # sigma = np.diag(sigma) + covar_regularization * np.eye(X.shape[-1])
+                
+                product,posPart,negPart = splitExpSumLog(diff**2,log_r_div_q_gamma)
+                try:
+                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
+                    sigma = np.diag(sigma) + covar_regularization * np.eye(X.shape[-1])
+                     
+                except Exception as e:
+                    raise e
+                
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
         
@@ -405,9 +511,19 @@ class CEMSEIS(cem.CEM):
                 diff = X[:,None,:]-mu
                 # Compute sigma using a vectorized outer product. 
                 # See https://stackoverflow.com/questions/42378936/numpy-elementwise-outer-product
-                sigma = np.sum(r_div_q_gamma[:,:,None] * diff**2,axis=0)/\
-                    np.sum(r_div_q_gamma,axis=0,keepdims=True).T
-                sigma = np.apply_along_axis(np.diag,axis=1,arr=sigma) + covar_regularization * np.eye(X.shape[-1])
+                # sigma = np.sum(r_div_q_gamma[:,:,None] * diff**2,axis=0)/\
+                #     np.sum(r_div_q_gamma,axis=0,keepdims=True).T
+                # sigma = np.apply_along_axis(np.diag,axis=1,arr=sigma) + covar_regularization * np.eye(X.shape[-1])
+                
+                product,posPart,negPart = splitExpSumLog(diff**2,log_r_div_q_gamma[:,:,None])
+                try:
+                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
+                    sigma = np.apply_along_axis(np.diag,axis=1,arr=sigma) + covar_regularization * np.eye(X.shape[-1])
+                     
+                except Exception as e:
+                    raise e
+                
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
             
@@ -577,7 +693,9 @@ class CEMSEIS(cem.CEM):
             log_qx = log_q_theta(x)
             
             self.pxList.append(np.exp(log_px))
+            self.logpxList.append(log_px)
             self.qxList.append(np.exp(log_qx))
+            self.logqxList.append(log_qx)
             
             gmmStIndex = int(np.ceil(nSamples * self.alpha))
             # log_Wx = log_px[gmmStIndex:] - log_qx[gmmStIndex:]
@@ -620,6 +738,7 @@ class CEMSEIS(cem.CEM):
         # Run EM for different values of k to find best GMM fit
         k = kMin
         kTooBig = False
+        retry = True
         maIncr = False
         resetCounter = 0
         runStageCounter = 0
@@ -632,8 +751,8 @@ class CEMSEIS(cem.CEM):
             
             # Define the intial params used for each EM trial
             initParamsList = self.sampleInitParams(s, numInitParams, k, params.dim())
-            updatedParamsList = []
-            ceArray = np.zeros(shape=(numInitParams,1))
+            updatedParamsList = [None,]*numInitParams
+            ceArray = np.ones(shape=(numInitParams,1)) * np.inf
             
             # Run the EM trials for current value of k
             for i in range(len(initParamsList)):
@@ -647,9 +766,10 @@ class CEMSEIS(cem.CEM):
                 # If the EM got one or more mixtures equal to zero, break out of the loop
                 if updatedParams == -1:
                     kTooBig = True
+                    retry = False
                     break
             
-                updatedParamsList.append(updatedParams)
+                updatedParamsList[i] = updatedParams
                 # If ce is None, then EM was terminated. Set ce to infinity.
                 ceArray[i] = ce if ce is not None else np.inf
                 
@@ -665,7 +785,7 @@ class CEMSEIS(cem.CEM):
             elif kTooBig and k == kMin:
             
                 # If all of the EM attempts failed, decrease kMin and try again
-                if np.all(ceArray==np.inf):
+                if np.all(ceArray==np.inf) and retry:
                     
                     # Run functions to print em results
                     for errStr in updatedParamsList:
@@ -690,11 +810,16 @@ class CEMSEIS(cem.CEM):
                         raise(e)
                 
                 # If only some of them failed, just take what we've got and break
-                else:
+                elif not np.all(ceArray==np.inf):
+                        
                     # Choose the best result of all initial params for the current value of k
                     # Choose the best params with lowest cross-entropy
                     bestParamsInd = np.argmin(ceArray)
                     bestParams = updatedParamsList[bestParamsInd]
+                    
+                    # This will occur if all of the update attempts failed
+                    if bestParams is None:
+                        break
                     
                     # Add new params to the list
                     bestParamsList.append(bestParams)         
@@ -713,6 +838,10 @@ class CEMSEIS(cem.CEM):
                     resetCounter = 0
                     
                     # Break after doing these computations
+                    break
+                
+                # This will occur if k is determined to be too big
+                else:
                     break
                     
             # If k isn't too big, increment for the next loop
@@ -761,6 +890,7 @@ class CEMSEIS(cem.CEM):
             print('No CIC values were computed!')
             print('kMin: {}'.format(kMin))
             print('kMax: {}'.format(kMax))
+            print('Number of CIC values computed: {}'.format(len(cicList)))
             raise e
         
         try:

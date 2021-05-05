@@ -96,7 +96,8 @@ def runReplicate(seed):
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    sampleSize = [4000,] + [1000,]*4 + [2000]
+    # sampleSize = [4000,] + [1000,]*4 + [2000]
+    sampleSize = [2000,] + [500,]*4 + [1000]
     # sampleSize = [1000,]
     
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,
@@ -105,7 +106,8 @@ def runReplicate(seed):
                             seed=seed,
                             log=True,
                             verbose=True,
-                            covar='homogeneous')
+                            covar='homogeneous',
+                            alpha=.1)
     procedure.run()
     
     # Estimate the failure probability

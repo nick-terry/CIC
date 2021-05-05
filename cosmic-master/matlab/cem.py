@@ -51,10 +51,14 @@ class GMMParams:
     def update(self,alpha,mu,sigma):
         
         # Check all the dims
-        assert(alpha.shape[0]==mu.shape[0])
-        assert(mu.shape[1]==self._dataDim)
-        assert(sigma.shape[0]==alpha.shape[0])
-        assert(sigma.shape[1]==self._dataDim and sigma.shape[2]==self._dataDim)
+        try:
+            assert(alpha.shape[0]==mu.shape[0])
+            assert(mu.shape[1]==self._dataDim)
+            assert(sigma.shape[0]==alpha.shape[0])
+            assert(sigma.shape[1]==self._dataDim and sigma.shape[2]==self._dataDim)
+        except Exception as e:
+            print(e)
+            raise(e)
         
         self._k = alpha.shape[0]
         self._alpha = alpha
@@ -1229,3 +1233,43 @@ class CEM:
             pck.dump(_self,f)   
             
         return filename
+    
+def q(params):
+        """
+        Get a function for computing the density of the current 
+        parametric estimate of the importance sampling distribution.
+    
+        Parameters
+        ----------
+        params : GMMParams
+            parameters of the parametric estimate
+    
+        Returns
+        -------
+        q : function
+            The density function.
+    
+        """
+        
+        alpha,mu,sigma = params.get()
+        
+        def _q(X):
+            
+            # Concatenate samples from each stage to a single numpy array
+            if type(X) is list:
+                _X = np.concatenate(X,axis=0)
+            else:
+                _X = X
+                
+            _alpha = np.tile(alpha,(_X.shape[0],1))
+            
+            # Compute density at each observation
+            densities = np.zeros(shape=(_X.shape[0],params.k()))
+            for j in range(params.k()):
+                densities[:,j] = stat.multivariate_normal.pdf(_X,mu[j,:],sigma[j,:],allow_singular=True)
+            
+            densities = np.expand_dims(np.sum(np.exp(np.log(_alpha) + np.log(densities)),axis=1),axis=1)
+            
+            return densities
+        
+        return _q
