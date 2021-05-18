@@ -1173,6 +1173,12 @@ class CEM:
                 self.write()
                 raise e
             
+            # If this is None, we did not have enough non-zero Hx values.
+            # In that case, we keep the same GMM from previous stage and continue            
+            if bestParamsByK is None:
+                
+                bestParamsByK,cicByK = self.bestParamsLists[-1],self.cicLists[-1]
+                
             # Record the best params and cic arrays
             self.bestParamsLists.append(bestParamsByK)
             self.cicLists.append(cicByK)
@@ -1185,7 +1191,7 @@ class CEM:
             self.paramsList.append(bestParams)
                 
             self.cicArray[s] = cicByK[bestInd]
-    
+        
         return self.cicArray,self.paramsList,self.X
        
     def getResults(self):
@@ -1273,3 +1279,20 @@ def q(params):
             return densities
         
         return _q
+    
+def getAverageDensityFn(paramsList):
+    
+    densityFnList = []
+    
+    for params in paramsList:
+        densityFnList.append(q(params))
+        
+    def _q(X):
+        
+        densities = [densityFn(X) for densityFn in densityFnList]
+        densities = np.mean(np.stack(densities),axis=0)
+        return densities
+    
+    return _q
+        
+        

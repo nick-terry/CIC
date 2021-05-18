@@ -14,7 +14,7 @@ import cem
 import defensiveIS
 import copy
 
-def splitExpSumLog(x,y):
+def splitExpSumLog(x,y=None):
     """
     Compute the product of x and exp(y) using log transforms. x is not assumed
     to be positive
@@ -31,10 +31,30 @@ def splitExpSumLog(x,y):
     None.
 
     """
+    if y is None:
+        y = np.zeros_like(x)
+        
     posPart = np.ma.log(np.ma.masked_array(x,x<=0)) + y
     negPart = np.ma.log(np.ma.masked_array(-x,x>=0)) + y
-    product = np.exp(posPart).filled(0) - np.exp(negPart).filled(0)
     
+    with warnings.catch_warnings():
+
+        warnings.filterwarnings('error')
+        
+        try:
+            product = np.exp(posPart).filled(0) - np.exp(negPart).filled(0)
+            
+        except Warning as w:
+            # print('Positive Part: {}'.format(posPart))
+            # print('Negative Part: {}'.format(negPart))
+            print(w)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                posExp,negExp = np.exp(posPart).filled(0),np.exp(negPart).filled(0)
+                product = posExp - negExp
+        
+    # product = np.exp(posPart).filled(0) - np.exp(negPart).filled(0)
+        
     return product,posPart,negPart
 
 class GMMParams:
@@ -193,7 +213,8 @@ class CEMSEIS(cem.CEM):
             
         self.cicArray = np.zeros(shape=(self.numIters,1))
         
-        self.covar_regularization = 10**-100
+        # self.covar_regularization = 10**-100
+        self.covar_regularization = 0
         
     def rho(self):
         """
@@ -231,10 +252,11 @@ class CEMSEIS(cem.CEM):
         beta,_qx,qx_alpha = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
             
         _rho = np.mean((fx * np.exp(px) - np.exp(_qx) @ beta)/np.exp(qx_alpha)) + np.sum(beta)
-        # _rho = np.mean((np.exp(np.log(fx) + px) -\
-        #                 np.exp(_qx + np.log(np.repeat(beta,_qx.shape[0],axis=1)).T))/qx_alpha) + np.sum(beta)
         
-        product,posPart,negPart = splitExpSumLog(np.repeat(beta,_qx.shape[0],axis=1).T, _qx)
+        # numerator = fx * np.exp(px) - np.exp(_qx) @ beta
+        # product,posPart,negPart = splitExpSumLog(numerator)
+        
+        # product,posPart,negPart = splitExpSumLog(np.repeat(beta,_qx.shape[0],axis=1).T, _qx)
         
         # with warnings.catch_warnings():
         #     warnings.simplefilter("ignore")
@@ -344,6 +366,7 @@ class CEMSEIS(cem.CEM):
         log_sum_r_div_q_gamma = logsumexp(log_r_div_q_gamma,axis=0,keepdims=True)
         log_sum_r_div_q = logsumexp(log_r_div_q)
         
+        # TODO: this assertion is disabled as it may no longer be true that -inf entries break the EM algo
         if np.any(log_sum_r_div_q_gamma==-np.inf):
             # print('zeros in r_div_q_gamma!')
             # print('k={}'.format(params.k()))
@@ -377,13 +400,19 @@ class CEMSEIS(cem.CEM):
             raise e
 
         # mu = np.sum(r_div_q_gamma[:,:,None]*X[:,None,:],axis=0)/np.sum(r_div_q_gamma,axis=0,keepdims=True).T
+        # r_div_q_gamma_normed = np.exp(log_r_div_q_gamma[:,:,None]-np.repeat(log_sum_r_div_q_gamma.T,X.shape[-1],axis=1))
+        r_div_q_gamma_normed = np.exp(log_r_div_q_gamma - log_sum_r_div_q_gamma)
+        # product,posPart,negPart = splitExpSumLog(X[:,None,:],log_r_div_q_gamma[:,:,None])
+        # product,posPart,negPart = splitExpSumLog(X[:,None,:],r_div_q_gamma_normed)
+        # try:
+        #     mu = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+        #                 np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
+        #     mu = np.sum(np.exp(posPart).filled(0) -\
+        #                 np.exp(negPart).filled(0),axis=0)
+        # except Exception as e:
+        #     raise e
         
-        product,posPart,negPart = splitExpSumLog(X[:,None,:],log_r_div_q_gamma[:,:,None])
-        try:
-            mu = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
-                        np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
-        except Exception as e:
-            raise e
+        mu = np.sum(r_div_q_gamma_normed[:,:,None]*X[:,None,:],axis=0)
         
         if len(mu.shape)==1:
             mu = mu[None,:]
@@ -407,14 +436,17 @@ class CEMSEIS(cem.CEM):
                 # sigma = np.sum(r_div_q_gamma[:,:,None]*(diff[:,:,None]*diff[:,None]),axis=0)/\
                 #     np.sum(r_div_q_gamma,axis=0) + covar_regularization * np.eye(mu.shape[-1])
                 
-                product,posPart,negPart = splitExpSumLog((diff[:,:,None]*diff[:,None]),log_r_div_q_gamma[:,:,None])
-                try:
-                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
-                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0) +\
-                                covar_regularization * np.eye(mu.shape[-1])
-                except Exception as e:
-                    raise e
-                    
+                # product,posPart,negPart = splitExpSumLog((diff[:,:,None]*diff[:,None]),log_r_div_q_gamma[:,:,None])
+                # try:
+                #     sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                #                 np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0) +\
+                #                 covar_regularization * np.eye(mu.shape[-1])
+                # except Exception as e:
+                #     raise e
+                
+                sigma = np.sum(r_div_q_gamma_normed[:,:,None]*(diff[:,:,None]*diff[:,None]),axis=0)\
+                    + covar_regularization * np.eye(mu.shape[-1])
+                
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
             
@@ -426,14 +458,17 @@ class CEMSEIS(cem.CEM):
                 # sigma = np.sum(r_div_q_gamma[:,:,None,None]*(diff[:,:,:,None]*diff[:,:,None]),axis=0)/\
                 #     np.sum(r_div_q_gamma,axis=0,keepdims=True).T[:,:,None] + covar_regularization * np.eye(mu.shape[-1])
                     
-                product,posPart,negPart = splitExpSumLog((diff[:,:,:,None]*diff[:,:,None]),log_r_div_q_gamma[:,:,:,None])
-                try:
-                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
-                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0) +\
-                                covar_regularization * np.eye(mu.shape[-1])
-                except Exception as e:
-                    raise e
+                # product,posPart,negPart = splitExpSumLog((diff[:,:,:,None]*diff[:,:,None]),log_r_div_q_gamma[:,:,:,None])
+                # try:
+                #     sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                #                 np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0) +\
+                #                 covar_regularization * np.eye(mu.shape[-1])
+                # except Exception as e:
+                #     raise e
                     
+                sigma = np.sum(r_div_q_gamma_normed[:,:,None,None]*(diff[:,:,:,None]*diff[:,:,None]),axis=0)\
+                     + covar_regularization * np.eye(mu.shape[-1])
+                
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
                 
@@ -449,13 +484,16 @@ class CEMSEIS(cem.CEM):
                 #     np.sum(r_div_q_gamma,axis=0)/X.shape[-1]
                 # sigma = (sigma + covar_regularization) * np.eye(X.shape[-1])
                 
-                product,posPart,negPart = splitExpSumLog(np.sum(diff**2,axis=-1,keepdims=True),log_r_div_q_gamma)
-                try:
-                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
-                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
-                    sigma = (sigma + covar_regularization) * np.eye(X.shape[-1])
-                except Exception as e:
-                    raise e
+                # product,posPart,negPart = splitExpSumLog(np.sum(diff**2,axis=-1,keepdims=True),log_r_div_q_gamma)
+                # try:
+                #     sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                #                 np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
+                #     sigma = (sigma + covar_regularization) * np.eye(X.shape[-1])
+                # except Exception as e:
+                #     raise e
+                
+                sigma = np.sum(r_div_q_gamma_normed*np.sum(diff**2,axis=-1,keepdims=True),axis=0)[:,None]/X.shape[-1]
+                sigma = (sigma + covar_regularization) * np.eye(X.shape[-1])
                 
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
@@ -470,16 +508,20 @@ class CEMSEIS(cem.CEM):
                 # sigma = np.repeat(np.repeat(sigma[:,:,None],axis=1,repeats=X.shape[-1]),
                 #                   axis=2,repeats=X.shape[-1]) * np.eye(X.shape[-1])
                 
-                product,posPart,negPart = splitExpSumLog(np.sum(diff**2,axis=-1,keepdims=True),log_r_div_q_gamma[:,:,None])
-                try:
-                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
-                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0) +\
-                                covar_regularization
-                    sigma = np.repeat(np.repeat(sigma[:,:,None],axis=1,repeats=X.shape[-1]),
-                                axis=2,repeats=X.shape[-1]) * np.eye(X.shape[-1])
+                # product,posPart,negPart = splitExpSumLog(np.sum(diff**2,axis=-1,keepdims=True),log_r_div_q_gamma[:,:,None])
+                # try:
+                #     sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                #                 np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0) +\
+                #                 covar_regularization
+                #     sigma = np.repeat(np.repeat(sigma[:,:,None],axis=1,repeats=X.shape[-1]),
+                #                 axis=2,repeats=X.shape[-1]) * np.eye(X.shape[-1])
                      
-                except Exception as e:
-                    raise e
+                # except Exception as e:
+                #     raise e
+                
+                sigma = np.sum(r_div_q_gamma_normed[:,:,None]*np.sum(diff**2,axis=-1,keepdims=True),axis=0)//X.shape[-1] + covar_regularization
+                sigma = np.repeat(np.repeat(sigma[:,:,None],axis=1,repeats=X.shape[-1]),
+                                  axis=2,repeats=X.shape[-1]) * np.eye(X.shape[-1])
                 
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
@@ -494,14 +536,17 @@ class CEMSEIS(cem.CEM):
                 #     np.sum(r_div_q_gamma,axis=0)/X.shape[-1]
                 # sigma = np.diag(sigma) + covar_regularization * np.eye(X.shape[-1])
                 
-                product,posPart,negPart = splitExpSumLog(diff**2,log_r_div_q_gamma)
-                try:
-                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
-                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
-                    sigma = np.diag(sigma) + covar_regularization * np.eye(X.shape[-1])
+                # product,posPart,negPart = splitExpSumLog(diff**2,log_r_div_q_gamma)
+                # try:
+                #     sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                #                 np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
+                #     sigma = np.diag(sigma)/params.dim() + covar_regularization * np.eye(X.shape[-1])
                      
-                except Exception as e:
-                    raise e
+                # except Exception as e:
+                #     raise e
+                
+                sigma = np.sum(r_div_q_gamma_normed * diff**2,axis=0)/X.shape[-1]
+                sigma = np.diag(sigma) + covar_regularization * np.eye(X.shape[-1])
                 
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
@@ -515,24 +560,29 @@ class CEMSEIS(cem.CEM):
                 #     np.sum(r_div_q_gamma,axis=0,keepdims=True).T
                 # sigma = np.apply_along_axis(np.diag,axis=1,arr=sigma) + covar_regularization * np.eye(X.shape[-1])
                 
-                product,posPart,negPart = splitExpSumLog(diff**2,log_r_div_q_gamma[:,:,None])
-                try:
-                    sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
-                                np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
-                    sigma = np.apply_along_axis(np.diag,axis=1,arr=sigma) + covar_regularization * np.eye(X.shape[-1])
+                # product,posPart,negPart = splitExpSumLog(diff**2,log_r_div_q_gamma[:,:,None])
+                # try:
+                #     sigma = np.sum(np.exp(posPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0) -\
+                #                 np.exp(negPart - np.repeat(log_sum_r_div_q_gamma.T,posPart.shape[-1],axis=1)).filled(0),axis=0)
+                #     sigma = np.apply_along_axis(np.diag,axis=1,arr=sigma) + covar_regularization * np.eye(X.shape[-1])
                      
-                except Exception as e:
-                    raise e
+                # except Exception as e:
+                #     raise e
+                
+                sigma = np.sum(r_div_q_gamma_normed[:,:,None] * diff**2,axis=0)
+                sigma = np.apply_along_axis(np.diag,axis=1,arr=sigma) + covar_regularization * np.eye(X.shape[-1])
                 
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
-            
+        
         # Check that there is no inf/nan values and that sigma is not singular
         try:
             assert(not np.any(np.isnan(sigma)))
             assert(not np.any(sigma==np.inf))
-            for i in range(sigma.shape[0]):
-                assert(np.linalg.det(sigma[i].astype(np.float64))!=0)
+            
+            if self.covar_regularization > 0:
+                for i in range(sigma.shape[0]):
+                    assert(np.linalg.det(sigma[i].astype(np.float64))!=0)
         except Exception as e:
             print('Floating point error while computing sigma!')
             for i in range(sigma.shape[0]):
@@ -735,6 +785,16 @@ class CEMSEIS(cem.CEM):
         cicList = []
         cicMA = []
         
+        # Make sure we have enough non-zero Hx values that we can account for all DOF in GMM.
+        if s == 0:
+            Hx_Wx_total = np.concatenate(self.Hx_WxList, axis=0)    
+        else:
+            Hx_Wx_total = np.concatenate(self.Hx_WxList[1:], axis=0)    
+        
+        # If this occurs, we do not have enough LI vectors to estimate the GMM params
+        if np.sum(1-np.isinf(Hx_Wx_total)) < params.dim() + 3:
+            return None,None,None
+        
         # Run EM for different values of k to find best GMM fit
         k = kMin
         kTooBig = False
@@ -891,6 +951,7 @@ class CEMSEIS(cem.CEM):
             print('kMin: {}'.format(kMin))
             print('kMax: {}'.format(kMax))
             print('Number of CIC values computed: {}'.format(len(cicList)))
+            print('Current k value: {}'.format(k))
             raise e
         
         try:

@@ -59,7 +59,7 @@ def samplingOracle(n):
 
     """
     
-    x = stat.multivariate_normal.rvs(np.zeros((2,)),cov=np.eye(2),size=n)
+    x = stat.multivariate_normal.rvs(np.zeros((3,)),cov=np.eye(3),size=n)
     
     return x
 
@@ -68,11 +68,13 @@ def runReplicate(seed):
     # Create a SimulationEngine for evaluating h(x)
     #sim = se.SimulationEngine()
     # dataDim = sim.numBranches
-    dataDim = 2
+    dataDim = 3
     
     def h(x):
         
-        failed = np.product(1 * (x > 2), axis=1, keepdims=True)
+        # failed = np.product(1 * (x > 2), axis=1, keepdims=True)
+        A = np.eye(dataDim)
+        failed = np.sum((x @ A) * x,axis=1,keepdims=True)<=.1
         
         return failed
     
@@ -97,7 +99,7 @@ def runReplicate(seed):
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
     # sampleSize = [4000,] + [1000,]*4 + [2000]
-    sampleSize = [2000,] + [500,]*4 + [1000]
+    sampleSize = [5000,] + [1000,]*4 + [2500]
     # sampleSize = [1000,]
     
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,

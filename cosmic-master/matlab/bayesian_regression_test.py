@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 # Import cem test version (stored locally, NOT a package!)
 import cemSEIS as cem
 from cem import q as getGmmPDF
+from cem import getAverageDensityFn as getAvgGmmPDF
 # import simengine as se
 
 def h_mu_sigma(theta,mu,sigma):
@@ -280,30 +281,22 @@ if __name__ == '__main__':
     #     result.wait()
     #     resultList = result.get()
     rhoList = []
+    paramsList = []
     for seed in list(seeds):
-        rho,ce,params = runReplicate(seed,mu_prior,sigma_prior,XY)
+        rho,ce,params = runReplicate(seed,mu_prior,sigma_prior,X)
         rhoList.append(rho)
+        paramsList.append(params)
     
-    toCsvList = [[rho,] for rho in rhoList]
-    # rhoList = [item[0] for item in resultList]
-    # toCsvList = [[item[0],item[1]] for item in resultList]
+    # average all of the GMM densities
     
-    # print('Mean: {}'.format(np.mean(rhoList)))
-    # print('Std Err: {}'.format(stat.sem(rhoList)))
-    # # Save the estimates of failure probabilty to csv
-    # with open('bias_results.csv','w') as f:
-    #     writer = csv.writer(f)
-    #     # Header row
-    #     writer.writerow(['rho','final_k'])
-    #     writer.writerows(toCsvList)
     
     # make a grid and show the density
-    # fig,axes = plt.subplots(1,2)
-    # plotGMM(params, getGmmPDF, axes[0])
-    # mu_posterior,sigma_posterior = getPosterior(mu_prior, sigma_prior, sigma, X)
-    # plotMVN(mu_posterior, sigma_posterior, axes[1])
+    fig,axes = plt.subplots(1,2)
+    plotGMM(paramsList, getAvgGmmPDF, axes[0])
+    mu_posterior,sigma_posterior = getPosterior(mu_prior, sigma_prior, sigma, X)
+    plotMVN(mu_posterior, sigma_posterior, axes[1])
     
-    # axes[0].set_title('GMM Approximation')
-    # axes[1].set_title('True Posterior Distribution')
+    axes[0].set_title('GMM Approximation')
+    axes[1].set_title('True Posterior Distribution')
     
     

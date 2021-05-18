@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 # Import cem test version (stored locally, NOT a package!)
 import cemSEIS as cem
 from cem import q as getGmmPDF
+from cem import getAverageDensityFn as getAvgGmmPDF
 # import simengine as se
 
 def h_mu_sigma(theta,mu,sigma):
@@ -112,14 +113,16 @@ def plotGMM(params,q,_ax=None,circle=False):
     if _ax is None:
         plt.colorbar(contf)
     
-    # Mark the means of each Gaussian component
-    alpha,mu,sigma = params.get()
-    for j in range(params.k()):
-        ax.scatter(mu[j,0],mu[j,1],marker='x',color='red')
-     
-    if circle:
-        c1 = plt.Circle((mu[0,0],mu[0,1]),np.linalg.norm(mu)/2,color='red',fill=False)
-        ax.add_artist(c1)
+    if type(params)!=list:
+        
+        # Mark the means of each Gaussian component
+        alpha,mu,sigma = params.get()
+        for j in range(params.k()):
+            ax.scatter(mu[j,0],mu[j,1],marker='x',color='red')
+         
+        if circle:
+            c1 = plt.Circle((mu[0,0],mu[0,1]),np.linalg.norm(mu)/2,color='red',fill=False)
+            ax.add_artist(c1)
         
     ax.set_xlabel('x1')
     ax.set_ylabel('x2')
@@ -204,7 +207,7 @@ def runReplicate(seed,mu_prior,sigma_prior,X):
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    sampleSize = [200,] + [50,]*4 + [100]
+    sampleSize = [2000,] + [500,]*4 + [1000]
     # sampleSize = [1000,]
     
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,
@@ -234,13 +237,13 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 1
+    numReps = 10
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
     
     # Define the data used to compute likelihood (i.e. this is the "true" distribution)
-    X = stat.multivariate_normal.rvs(np.array([.2,.7]),np.eye(2),size=30)
+    X = stat.multivariate_normal.rvs(np.array([.2,.7]),np.eye(2),size=10)
     
     # Define the prior's parameters
     mu_prior = np.zeros(2)
@@ -255,26 +258,18 @@ if __name__ == '__main__':
     #     result.wait()
     #     resultList = result.get()
     rhoList = []
+    paramsList = []
     for seed in list(seeds):
         rho,ce,params = runReplicate(seed,mu_prior,sigma_prior,X)
         rhoList.append(rho)
+        paramsList.append(params)
     
-    toCsvList = [[rho,] for rho in rhoList]
-    # rhoList = [item[0] for item in resultList]
-    # toCsvList = [[item[0],item[1]] for item in resultList]
+    # average all of the GMM densities
     
-    # print('Mean: {}'.format(np.mean(rhoList)))
-    # print('Std Err: {}'.format(stat.sem(rhoList)))
-    # # Save the estimates of failure probabilty to csv
-    # with open('bias_results.csv','w') as f:
-    #     writer = csv.writer(f)
-    #     # Header row
-    #     writer.writerow(['rho','final_k'])
-    #     writer.writerows(toCsvList)
     
     # make a grid and show the density
     fig,axes = plt.subplots(1,2)
-    plotGMM(params, getGmmPDF, axes[0])
+    plotGMM(paramsList, getAvgGmmPDF, axes[0])
     mu_posterior,sigma_posterior = getPosterior(mu_prior, sigma_prior, sigma, X)
     plotMVN(mu_posterior, sigma_posterior, axes[1])
     
