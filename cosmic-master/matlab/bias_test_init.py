@@ -21,8 +21,6 @@ from cem import q as getGmmPDF
 import cemSEIS as cem
 # import simengine as se
 
-d = 3
-
 # load lookup table for simulation results
 with open('simDict_10.pck','rb') as f:
     hDict = pickle.load(f)
@@ -64,16 +62,63 @@ def samplingOracle(n):
 
     """
     
-    x = stat.multivariate_normal.rvs(np.zeros((d,)),cov=np.eye(d),size=n)
+    x = stat.multivariate_normal.rvs(np.zeros((2,)),cov=np.eye(2),size=n)
     
     return x
 
-def plotGMM(params,q,_ax=None,circle=False,hw=20):
+def generateX(params,num=1):
+        """
+        Randomly generate a vector from GMM
+    
+        Parameters
+        ----------
+        params: GMMParams
+            Estimated importance sampling distribution params.
+        num : positive int
+            Number of contingencies to generate.
+    
+        Returns
+        -------
+        x : numpy array
+            Contingency vector(s).
+    
+        """
+        if params is None:
+            x = samplingOracle(num)
+            
+        else:
+            # Randomly choose the mixture components to generate from
+            alpha,mu,sigma = params.get()
+            if params.k() > 1:
+                try:
+                    mixtureComponents = np.random.choice(np.array(range(params.k())),size=(num,),p=alpha.squeeze().astype(np.float64))
+                except Exception as e:
+                    print(alpha.squeeze())
+                    print(np.sum(alpha.squeeze()))
+                    raise e
+            else:
+                mixtureComponents = np.zeros(shape=(num,)).astype(int)
+        
+            # Generate the vectors from the mixture components
+            x = np.zeros(shape=(num,2))
+            for i,mixtureComponent in enumerate(mixtureComponents):
+                _mu = mu[mixtureComponent,:]
+                _sigma = sigma[mixtureComponent,:,:]
+                x[i,:] = np.random.RandomState().multivariate_normal(_mu,_sigma)
+        
+        return x.astype(np.longdouble)
+
+def plotGMM(params,q,_ax=None,circle=False,hw=20,cmap=None,norm=None):
     coords = np.linspace(-hw,hw,num=1000)
     coords_grid = np.transpose([np.tile(coords, coords.size),
                                 np.repeat(coords, coords.size)])
     q_theta = q(params)
     density_grid = np.reshape(q_theta(coords_grid),(coords.size,coords.size))
+    
+    if norm is not None:
+        density_grid = density_grid/norm
+        
+    maxVal = np.max(density_grid)
     
     # Draw contours of GMM density
     if _ax is None:
@@ -81,10 +126,8 @@ def plotGMM(params,q,_ax=None,circle=False,hw=20):
     else:
         ax = _ax
         
-    contf = ax.contourf(coords,coords,density_grid,levels=10,cmap='bone')
-    
-    if _ax is None:
-        plt.colorbar(contf)
+    contf = ax.contourf(coords,coords,density_grid,levels=10,
+                        cmap='bone' if cmap is None else cmap)
     
     if type(params)!=list:
         
@@ -102,14 +145,16 @@ def plotGMM(params,q,_ax=None,circle=False,hw=20):
     ax.set_xlim(-hw,hw)
     ax.set_ylim(-hw,hw)
     
-    return ax
+    ax.set_title('GMM Density Function')
+    
+    return ax,contf,maxVal
 
 def runReplicate(seed):
     
     # Create a SimulationEngine for evaluating h(x)
     #sim = se.SimulationEngine()
     # dataDim = sim.numBranches
-    dataDim = d
+    dataDim = 2
     
     def h(x):
         
@@ -149,37 +194,42 @@ def runReplicate(seed):
     print('Solving for initial variance...')
     # This computes the necessary variance of each component to "cover" the region of interest
     # See http://www.stat.yale.edu/~yw562/teaching/598/lec14.pdf
-    sigmaSq = np.sqrt(3)/np.pi**.25 * (4*hw**2 * spc.gamma(dataDim/2+1)/k)**(1/dataDim)
+    sigmaSq_2 = np.sqrt(3)/np.pi**.25 * (4*hw**2 * spc.gamma(dataDim/2+1)/k)**(1/dataDim)
     print('Variance: {}'.format(sigmaSq))
     
     # Re-make GMM params
-    sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
-    initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
+    sigma0_2 = sigmaSq_2 * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
+    initParams = cem.GMMParams(alpha0, mu0, sigma0_2, dataDim)
+    initParams2 = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
     
     # Visualize the resulting density
-    # plotGMM(initParams, getGmmPDF)
+    fig,axes = plt.subplots(1,2,True,True)
+    _,contf,maxVal = plotGMM(initParams2, getGmmPDF, axes[0], hw=2*hw)
+    plotGMM(initParams, getGmmPDF, axes[1], hw=2*hw, norm=maxVal)
+    
+    fig.colorbar(contf,ax=axes.ravel().tolist())
 
-    # sampleSize = [4000,] + [1000,]*4 + [2000]
-    sampleSize = [8000,] + [2000,]*4 + [4000]
-    # sampleSize = [1000,]
+    # # sampleSize = [4000,] + [1000,]*4 + [2000]
+    # sampleSize = [5000,] + [1000,]*4 + [2500]
+    # # sampleSize = [1000,]
     
-    procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,
-                            numIters=len(sampleSize),
-                            sampleSize=sampleSize,
-                            seed=seed,
-                            log=True,
-                            verbose=True,
-                            covar='homogeneous',
-                            alpha=.1)
-    procedure.run()
+    # procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,
+    #                         numIters=len(sampleSize),
+    #                         sampleSize=sampleSize,
+    #                         seed=seed,
+    #                         log=True,
+    #                         verbose=True,
+    #                         covar='homogeneous',
+    #                         alpha=.1)
+    # procedure.run()
     
-    # Estimate the failure probability
-    rho = procedure.rho()
-    k = procedure.paramsList[-1].k()
+    # # Estimate the failure probability
+    # rho = procedure.rho()
+    # k = procedure.paramsList[-1].k()
     
-    print('Done with replicate!')
+    # print('Done with replicate!')
     
-    return rho,k
+    # return rho,k,initParams
 
 if __name__ == '__main__':
     
@@ -205,7 +255,7 @@ if __name__ == '__main__':
     #     resultList = result.get()
     rhoList = []
     for seed in list(seeds):
-        rho,ce = runReplicate(seed)
+        rho,ce,initParams = runReplicate(seed)
         rhoList.append(rho)
     
     toCsvList = [[rho,] for rho in rhoList]

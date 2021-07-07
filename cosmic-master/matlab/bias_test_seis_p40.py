@@ -21,7 +21,7 @@ from cem import q as getGmmPDF
 import cemSEIS as cem
 # import simengine as se
 
-d = 3
+d = 100
 
 # load lookup table for simulation results
 with open('simDict_10.pck','rb') as f:
@@ -215,7 +215,7 @@ if __name__ == '__main__':
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('bias_results.csv','w') as f:
+    with open('bias_results_p100.csv','w') as f:
         writer = csv.writer(f)
         # Header row
         writer.writerow(['rho','final_k'])

@@ -21,7 +21,7 @@ from cem import q as getGmmPDF
 import cemSEIS as cem
 # import simengine as se
 
-d = 3
+d = 10
 
 # load lookup table for simulation results
 with open('simDict_10.pck','rb') as f:
@@ -113,7 +113,7 @@ def runReplicate(seed):
     
     def h(x):
         
-        failed = np.product(1 * (x > 2), axis=1, keepdims=True)
+        failed = np.product(1 * (x > 1), axis=1, keepdims=True)
         # A = np.eye(dataDim)
         # failed = np.sum((x @ A) * x,axis=1,keepdims=True)<=.1
         
@@ -191,7 +191,7 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 1
+    numReps = 100
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
@@ -215,7 +215,7 @@ if __name__ == '__main__':
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('bias_results.csv','w') as f:
+    with open('bias_results_p10.csv','w') as f:
         writer = csv.writer(f)
         # Header row
         writer.writerow(['rho','final_k'])

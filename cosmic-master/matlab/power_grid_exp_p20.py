@@ -21,6 +21,8 @@ import cemSEIS as cem
 with open('simDict_10.pck','rb') as f:
     hDict = pickle.load(f)
 
+d = 20
+
 def p(x):
     """
     Compute the true log likelihood of x from normal distribution
@@ -58,7 +60,7 @@ def samplingOracle(n):
 
     """
     
-    x = stat.multivariate_normal.rvs(np.zeros((3,)),cov=np.eye(3),size=n)
+    x = stat.multivariate_normal.rvs(np.zeros((d,)),cov=np.eye(d),size=n)
     
     return x
 
@@ -67,10 +69,10 @@ def runReplicate(seed):
     # Create a SimulationEngine for evaluating h(x)
     #sim = se.SimulationEngine()
     # dataDim = sim.numBranches
-    dataDim = 3
+    dataDim = d
     
     # the number of active components
-    nActive = 3
+    nActive = d
     
     # load lookup table for simulation results
     with open('simDict_10.pck','rb') as f:
@@ -123,12 +125,9 @@ def runReplicate(seed):
         failed = 1 * (-w/2 <= x) * (x <= w/2)
         
         contingency = np.zeros((x.shape[0],46))
-        # need to shift for p=3 for blackout to occur
-        shift = 2
+        
+        shift = 0
         contingency[:,shift:nActive+shift] = failed
-        contingency[:,0] = 1
-        contingency[:,0] = 1
-        contingency[:,8] = 1
     
         return contingency
     
@@ -201,7 +200,7 @@ if __name__ == '__main__':
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('results_p3_homog.csv','w') as f:
+    with open('results_p20_homog.csv','w') as f:
         writer = csv.writer(f)
         # Header row
         writer.writerow(['rho','final_k'])

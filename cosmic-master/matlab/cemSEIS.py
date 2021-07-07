@@ -343,7 +343,10 @@ class CEMSEIS(cem.CEM):
         
         # gamma = self.expectation(X, q, params)
         # Added small amount of regularization here to prevent a component having alpha=0
-        log_gamma =  self.log_expectation(X, q, params) #+ self.covar_regularization
+        try:
+            log_gamma =  self.log_expectation(X, q, params) #+ self.covar_regularization
+        except:
+            return -1,-1,-1
         
         log_r_div_q = np.concatenate(self.Hx_WxList,axis=0)
         
@@ -519,12 +522,16 @@ class CEMSEIS(cem.CEM):
                 # except Exception as e:
                 #     raise e
                 
-                sigma = np.sum(r_div_q_gamma_normed[:,:,None]*np.sum(diff**2,axis=-1,keepdims=True),axis=0)//X.shape[-1] + covar_regularization
+                sigma = np.sum(r_div_q_gamma_normed[:,:,None]*np.sum(diff**2,axis=-1,keepdims=True),axis=0)/X.shape[-1] + covar_regularization
                 sigma = np.repeat(np.repeat(sigma[:,:,None],axis=1,repeats=X.shape[-1]),
                                   axis=2,repeats=X.shape[-1]) * np.eye(X.shape[-1])
                 
+                # print([np.all(sigma[i]==0) for i in range(sigma.shape[0])])
+                # print(np.any([np.all(sigma[i]==0) for i in range(sigma.shape[0])]))
+
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
+                    
             
         elif self.covarStruct=='diagonal':
             if mu.shape[0]==1:
@@ -580,9 +587,9 @@ class CEMSEIS(cem.CEM):
             assert(not np.any(np.isnan(sigma)))
             assert(not np.any(sigma==np.inf))
             
-            if self.covar_regularization > 0:
-                for i in range(sigma.shape[0]):
-                    assert(np.linalg.det(sigma[i].astype(np.float64))!=0)
+            # if self.covar_regularization > 0:
+            #     for i in range(sigma.shape[0]):
+            #         assert(np.linalg.det(sigma[i].astype(np.float64))!=0)
         except Exception as e:
             print('Floating point error while computing sigma!')
             for i in range(sigma.shape[0]):
@@ -622,6 +629,10 @@ class CEMSEIS(cem.CEM):
             
             # Perform a single EM iteration
             alpha,mu,sigma = self.emIteration(params)
+            
+            # If alpha is -1, we had an error taking log likelihood
+            if type(alpha)==int and alpha==-1:
+                return params,np.inf
             
             # Check if the EM iteration resulted in alpha=0
             if type(alpha)!=np.ndarray:
@@ -792,7 +803,8 @@ class CEMSEIS(cem.CEM):
             Hx_Wx_total = np.concatenate(self.Hx_WxList[1:], axis=0)    
         
         # If this occurs, we do not have enough LI vectors to estimate the GMM params
-        if np.sum(1-np.isinf(Hx_Wx_total)) < params.dim() + 3:
+        numUsableObs = np.sum(1-np.isinf(Hx_Wx_total))
+        if numUsableObs < params.dim() + 3:
             return None,None,None
         
         # Run EM for different values of k to find best GMM fit
@@ -866,7 +878,7 @@ class CEMSEIS(cem.CEM):
                     # If we have too many failures, stop the program. Otherwise this can be an
                     # endless loop
                     if resetCounter > 100:
-                        e = Exception('Unable to solve EM after 100 tries...aborting!')
+                        e = Exception('Unable to solve EM after 100 tries...aborting (In stage {} w/ numUsableObs={})!'.format(s,numUsableObs))
                         raise(e)
                 
                 # If only some of them failed, just take what we've got and break

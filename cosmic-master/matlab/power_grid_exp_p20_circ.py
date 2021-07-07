@@ -12,20 +12,17 @@ import numpy as np
 import multiprocessing as mp
 import csv
 import pickle
-import circlePacking as circ
-import matplotlib.pyplot as plt
-
-from cem import q as getGmmPDF
 
 # Import cem test version (stored locally, NOT a package!)
 import cemSEIS as cem
+import circlePacking as circ
 # import simengine as se
-
-d = 3
 
 # load lookup table for simulation results
 with open('simDict_10.pck','rb') as f:
     hDict = pickle.load(f)
+
+d = 20
 
 def p(x):
     """
@@ -68,42 +65,6 @@ def samplingOracle(n):
     
     return x
 
-def plotGMM(params,q,_ax=None,circle=False,hw=20):
-    coords = np.linspace(-hw,hw,num=1000)
-    coords_grid = np.transpose([np.tile(coords, coords.size),
-                                np.repeat(coords, coords.size)])
-    q_theta = q(params)
-    density_grid = np.reshape(q_theta(coords_grid),(coords.size,coords.size))
-    
-    # Draw contours of GMM density
-    if _ax is None:
-        fig,ax = plt.subplots(1)
-    else:
-        ax = _ax
-        
-    contf = ax.contourf(coords,coords,density_grid,levels=10,cmap='bone')
-    
-    if _ax is None:
-        plt.colorbar(contf)
-    
-    if type(params)!=list:
-        
-        # Mark the means of each Gaussian component
-        alpha,mu,sigma = params.get()
-        for j in range(params.k()):
-            ax.scatter(mu[j,0],mu[j,1],marker='x',color='red')
-         
-        if circle:
-            c1 = plt.Circle((mu[0,0],mu[0,1]),np.linalg.norm(mu)/2,color='red',fill=False)
-            ax.add_artist(c1)
-        
-    ax.set_xlabel('x1')
-    ax.set_ylabel('x2')
-    ax.set_xlim(-hw,hw)
-    ax.set_ylim(-hw,hw)
-    
-    return ax
-
 def runReplicate(seed):
     
     # Create a SimulationEngine for evaluating h(x)
@@ -111,13 +72,65 @@ def runReplicate(seed):
     # dataDim = sim.numBranches
     dataDim = d
     
+    # the number of active components
+    nActive = d
+    
+    # load lookup table for simulation results
+    with open('simDict_10.pck','rb') as f:
+        hDict = pickle.load(f)
+    
+    def _runSim(x):
+        """
+        Helper function to run a simulation of the N-2 contingency 
+    
+        Parameters
+        ----------
+        x : numpy array
+            The time-to-failure vector.
+    
+        Returns
+        -------
+        results : tuple
+            The results of the N-2 contingency simulation.
+    
+        """
+        
+        x = np.squeeze(x)
+        
+        result = hDict[tuple(x[:10])]
+    
+        return result
+
     def h(x):
         
-        failed = np.product(1 * (x > 2), axis=1, keepdims=True)
-        # A = np.eye(dataDim)
-        # failed = np.sum((x @ A) * x,axis=1,keepdims=True)<=.1
+        # Convert the time-of-failure vector to a boolean vector of contingencies
+        contingencies = getContingency(x,w=.05)
         
-        return failed
+        if len(x.shape) > 1 and x.shape[0] > 1:
+            n = x.shape[0]
+    
+            results = np.zeros(shape=(n,1))
+            
+            for i in range(n):
+ 
+                result = _runSim(contingencies[i,:])
+                results[i] = result
+                    
+        else:
+            results = np.array(_runSim(contingencies)).reshape((1,1))
+            
+        return results
+    
+    def getContingency(x,w=.5):
+        
+        failed = 1 * (-w/2 <= x) * (x <= w/2)
+        
+        contingency = np.zeros((x.shape[0],46))
+        
+        shift = 0
+        contingency[:,shift:nActive+shift] = failed
+    
+        return contingency
     
     np.random.seed(seed)
     
@@ -135,13 +148,12 @@ def runReplicate(seed):
     #                                     np.eye(dataDim),
     #                                     size=k)
     
+    # Set covariance matrix to be identity
+    # sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
+    
     # Initialize means of GMM components using circle packing
     print('Solving for GMM initialization...')
     mu0 = circ.getPacking(k,dataDim,sigmaSq)
-    
-    # Set covariance matrix to be identity
-    sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
-    initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
     # Half-width of cube centered at the origin which we want to explore    
     hw=5
@@ -150,27 +162,16 @@ def runReplicate(seed):
     # This computes the necessary variance of each component to "cover" the region of interest
     # See http://www.stat.yale.edu/~yw562/teaching/598/lec14.pdf
     sigmaSq = np.sqrt(3)/np.pi**.25 * (4*hw**2 * spc.gamma(dataDim/2+1)/k)**(1/dataDim)
-    print('Variance: {}'.format(sigmaSq))
-    
-    # Re-make GMM params
+    # Set covariance matrix to be identity
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
-    initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
     
-    # Visualize the resulting density
-    # plotGMM(initParams, getGmmPDF)
+    initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    # sampleSize = [4000,] + [1000,]*4 + [2000]
     sampleSize = [8000,] + [2000,]*4 + [4000]
     # sampleSize = [1000,]
     
-    procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,
-                            numIters=len(sampleSize),
-                            sampleSize=sampleSize,
-                            seed=seed,
-                            log=True,
-                            verbose=True,
-                            covar='homogeneous',
-                            alpha=.1)
+    procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,numIters=len(sampleSize),sampleSize=sampleSize,seed=seed,
+                        log=True,verbose=True,covar='homogeneous')
     procedure.run()
     
     # Estimate the failure probability
@@ -183,7 +184,7 @@ def runReplicate(seed):
 
 if __name__ == '__main__':
     
-    np.random.seed(420)
+    np.random.seed(42)
     
     # Use importance sampling to estimate probability of cascading blackout given
     # a random N-2 contingency.
@@ -191,31 +192,31 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 1
+    numReps = 100
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
     
-    # # Create multiprocessing pool w/ 28 nodes for Hyak cluster
-    # with mp.Pool(28) as _pool:
-    #     result = _pool.map_async(runReplicate,
-    #                               list(seeds),
-    #                               callback=lambda x : print('Done!'))
-    #     result.wait()
-    #     resultList = result.get()
-    rhoList = []
-    for seed in list(seeds):
-        rho,ce = runReplicate(seed)
-        rhoList.append(rho)
+    # Create multiprocessing pool w/ 28 nodes for Hyak cluster
+    with mp.Pool(28) as _pool:
+        result = _pool.map_async(runReplicate,
+                                  list(seeds),
+                                  callback=lambda x : print('Done!'))
+        result.wait()
+        resultList = result.get()
+    # rhoList = []
+    # for seed in list(seeds):
+    #     rho,ce = runReplicate(seed)
+    #     rhoList.append(rho)
     
-    toCsvList = [[rho,] for rho in rhoList]
-    # rhoList = [item[0] for item in resultList]
-    # toCsvList = [[item[0],item[1]] for item in resultList]
+    # toCsvList = [[rho,] for rho in rhoList]
+    rhoList = [item[0] for item in resultList]
+    toCsvList = [[item[0],item[1]] for item in resultList]
     
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('bias_results.csv','w') as f:
+    with open('results_p20_circ_homog.csv','w') as f:
         writer = csv.writer(f)
         # Header row
         writer.writerow(['rho','final_k'])

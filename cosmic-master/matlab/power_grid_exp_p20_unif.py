@@ -15,11 +15,14 @@ import pickle
 
 # Import cem test version (stored locally, NOT a package!)
 import cemSEIS as cem
+import circlePacking as circ
 # import simengine as se
 
 # load lookup table for simulation results
 with open('simDict_10.pck','rb') as f:
     hDict = pickle.load(f)
+
+d = 20
 
 def p(x):
     """
@@ -58,7 +61,7 @@ def samplingOracle(n):
 
     """
     
-    x = stat.multivariate_normal.rvs(np.zeros((3,)),cov=np.eye(3),size=n)
+    x = stat.multivariate_normal.rvs(np.zeros((d,)),cov=np.eye(d),size=n)
     
     return x
 
@@ -67,10 +70,10 @@ def runReplicate(seed):
     # Create a SimulationEngine for evaluating h(x)
     #sim = se.SimulationEngine()
     # dataDim = sim.numBranches
-    dataDim = 3
+    dataDim = d
     
     # the number of active components
-    nActive = 3
+    nActive = d
     
     # load lookup table for simulation results
     with open('simDict_10.pck','rb') as f:
@@ -123,12 +126,9 @@ def runReplicate(seed):
         failed = 1 * (-w/2 <= x) * (x <= w/2)
         
         contingency = np.zeros((x.shape[0],46))
-        # need to shift for p=3 for blackout to occur
-        shift = 2
+        
+        shift = 0
         contingency[:,shift:nActive+shift] = failed
-        contingency[:,0] = 1
-        contingency[:,0] = 1
-        contingency[:,8] = 1
     
         return contingency
     
@@ -136,20 +136,29 @@ def runReplicate(seed):
     
     # Run the CEM procedure
     
-    # Variance of each coordinate in initial GMM
-    sigmaSq = 3
-    
     # Initial guess for GMM params
     k = 10
     alpha0 = np.ones(shape=(k,))/k
     
     # Randomly intialize the means of the Gaussian mixture components
-    mu0 = np.random.multivariate_normal(np.zeros(dataDim),
-                                        np.eye(dataDim),
-                                        size=k)
+    # mu0 = np.random.multivariate_normal(np.zeros(dataDim),
+    #                                     np.eye(dataDim),
+    #                                     size=k)
+    
+    # Set covariance matrix to be identity
+    # sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
+    
+    # Half-width of cube centered at the origin which we want to explore    
+    hw=5
+    
+    mu0 = np.random.uniform(-hw,hw,size=(k,d))
+    
+    # Variance of each coordinate in initial GMM
+    sigmaSq = 3 * hw**2
     
     # Set covariance matrix to be identity
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
+    
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
     sampleSize = [8000,] + [2000,]*4 + [4000]
@@ -201,7 +210,7 @@ if __name__ == '__main__':
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('results_p3_homog.csv','w') as f:
+    with open('results_p20_circ_homog.csv','w') as f:
         writer = csv.writer(f)
         # Header row
         writer.writerow(['rho','final_k'])

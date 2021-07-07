@@ -502,8 +502,13 @@ class CEM:
         log_gamma = log_alpha_q - _log_density
         
         # Check that nothing weird happened
-        assert(not np.any(np.isnan(log_gamma)))
-        assert(not np.any(np.isinf(log_gamma)))
+        try:
+            assert(not np.any(np.isnan(log_gamma)))
+            assert(not np.any(np.isinf(log_gamma)))
+        except Exception as e:
+            # If this happens,consider the EM update to have failed
+            print('Error getting log likelihood of GMM component!')
+            raise e
         
         return log_gamma
     
@@ -533,6 +538,7 @@ class CEM:
         # Added small amount of regularization here to prevent a component having alpha=0
         # TODO: See if there is a better solution to this
         log_gamma =  self.log_expectation(X, q, params) + self.covar_regularization
+        
         
         r_div_q = np.concatenate(self.Hx_WxList,axis=0)
         
@@ -1177,7 +1183,10 @@ class CEM:
             # In that case, we keep the same GMM from previous stage and continue            
             if bestParamsByK is None:
                 
-                bestParamsByK,cicByK = self.bestParamsLists[-1],self.cicLists[-1]
+                if s > 0:
+                    bestParamsByK,cicByK = self.bestParamsLists[-1],self.cicLists[-1]
+                else:
+                    bestParamsByK,cicByK = [self.initParams,],[self.cic(self.initParams),]
                 
             # Record the best params and cic arrays
             self.bestParamsLists.append(bestParamsByK)
