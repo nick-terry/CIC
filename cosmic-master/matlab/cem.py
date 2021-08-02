@@ -22,6 +22,9 @@ import datetime as dttm
 import os
 import copy
 import logging
+import warnings
+
+# warnings.simplefilter("error")
     
 class GMMParams:
     
@@ -110,7 +113,8 @@ class CEM:
         
         # Store some historical data as procedure is executed
         self.bestParamsLists = []
-        self.cicLists = [] 
+        self.cicLists = []
+        self.s = 0
         
         # Some important constants which can be changed     
         # Set jitter used to prevent numerical issues due to zero densities
@@ -367,10 +371,17 @@ class CEM:
             
             # Compute density at each observation
             log_densities = np.zeros(shape=(_X.shape[0],params.k()))
-            for j in range(params.k()):
-                log_densities[:,j] = stat.multivariate_normal.logpdf(_X,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
+            try:
+                for j in range(params.k()):
+                    try:
+                        log_densities[:,j] = stat.multivariate_normal.logpdf(_X,mu[j,:],sigma[j,:],allow_singular=self.allowSingular)
+                    except Exception as e:
+                        raise(e)
+                
+                log_densities = np.expand_dims(spc.logsumexp(np.log(_alpha)+log_densities,axis=1),axis=1)
             
-            log_densities = np.expand_dims(spc.logsumexp(np.log(_alpha)+log_densities,axis=1),axis=1)
+            except np.linalg.LinAlgError as e:
+                print('Singular covariance matrix in the GMM!')    
             
             return log_densities
         
@@ -865,13 +876,19 @@ class CEM:
                 p = X.shape[-1]
                 covar = np.cov(XBar,rowvar=False)
                 tr = np.trace(covar) if len(covar.shape)>0 else covar
-                covar = 3/p*tr*np.eye(p) + np.eye(p) * self.covar_regularization
+                
+                # In case the trace is so small that we get some numerical issues in EM
+                if tr > 1e-100:
+                    covar = 3/p*tr*np.eye(p) + np.eye(p) * self.covar_regularization
+                else:
+                    covar  = 3/p*np.eye(p)
                 
                 # check that we are not somehow outputting zero matrix
                 try:
                     assert(not np.all(covar==0))
                 except:
-                    print('oops!')
+                    print('Init params for the GMM has a degenerate covar matrix (all zeros)')
+                    print(XBar)
                 
                 covar = np.tile(np.expand_dims(covar,axis=0),(k,1,1))
                 
@@ -1150,6 +1167,7 @@ class CEM:
         self.cicArray = np.zeros(shape=(self.numIters,1))
         
         self.timestamp = dttm.datetime.now().strftime('%m%d%Y_%H%M%S')
+       
         # Create log file
         if self.log:
             logging.basicConfig(filename='experiment_{}.log'.format(self.timestamp),
@@ -1157,6 +1175,8 @@ class CEM:
         
         # Loop for executing the algorithm
         for s in range(self.numIters):
+            
+            self.s = s
             
             if self.verbose:
                 print('Beginning Stage s={}'.format(s))
@@ -1175,6 +1195,7 @@ class CEM:
                 if self.log:
                     print('Aborting replication {} due to error!'.format(__name__))
                     logging.error(str(e))
+                
                 # Write out the CEM object for diagnosing the error
                 self.write()
                 raise e

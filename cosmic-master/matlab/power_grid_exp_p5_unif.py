@@ -64,7 +64,7 @@ def samplingOracle(n):
 
     return x
 
-def runReplicate(seed):
+def runReplicate(repNum,seed):
     
     # Create a SimulationEngine for evaluating h(x)
     #sim = se.SimulationEngine()
@@ -160,7 +160,7 @@ def runReplicate(seed):
     # sampleSize = [1000,]
 
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,numIters=len(sampleSize),sampleSize=sampleSize,seed=seed,
-                        log=True,verbose=True,covar='homogeneous')
+                        log=True,verbose=True,covar='homogeneous',repNum=repNum,allowSingular=True)
     procedure.run()
     
     # Estimate the failure probability
@@ -176,7 +176,7 @@ if __name__ == '__main__':
     np.random.seed(420)
     
     # Use importance sampling to estimate probability of cascading blackout given
-    # a random N-2 contingency.
+    # a random N-2 contingency. 
     
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
@@ -194,8 +194,8 @@ if __name__ == '__main__':
     #     result.wait()
     #     resultList = result.get()
     rhoList = []
-    for seed in list(seeds):
-        rho,ce = runReplicate(seed)
+    for i,seed in enumerate(list(seeds)):
+        rho,ce = runReplicate(i,seed)
         rhoList.append(rho)
     
     # toCsvList = [[rho,] for rho in rhoList]

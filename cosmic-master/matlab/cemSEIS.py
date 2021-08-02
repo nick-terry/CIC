@@ -67,6 +67,10 @@ class GMMParams:
         assert(sigma.shape[0]==alpha.shape[0])
         assert(sigma.shape[1]==dataDim and sigma.shape[2]==dataDim)
         
+        # Make sure we don't have a nearly-singular covar matrix
+        for i in range(alpha.shape[0]):
+            assert(np.any(np.abs(sigma[i])>1e-100))
+            
         self._dataDim = dataDim
         self._k = alpha.shape[0]
         self._alpha = alpha
@@ -89,6 +93,10 @@ class GMMParams:
         assert(mu.shape[1]==self._dataDim)
         assert(sigma.shape[0]==alpha.shape[0])
         assert(sigma.shape[1]==self._dataDim and sigma.shape[2]==self._dataDim)
+        
+        # Make sure we don't have a nearly-singular covar matrix
+        for i in range(alpha.shape[0]):
+            assert(np.any(np.abs(sigma[i])>1e-100))
         
         self._k = alpha.shape[0]
         self._alpha = alpha
@@ -211,6 +219,11 @@ class CEMSEIS(cem.CEM):
         else:
             self.covarStruct = 'full'
             
+        if 'repNum' in kwargs:
+            self.repNum = kwargs['repNum']
+        else:
+            self.repNum = -1
+            
         self.cicArray = np.zeros(shape=(self.numIters,1))
         
         # self.covar_regularization = 10**-100
@@ -229,44 +242,49 @@ class CEMSEIS(cem.CEM):
     
         """
         
-        # Use consistent unbiased estimator for zeroth stage
-        if len(self.X)==1:
+        # Catch warnings here bc overflow may happen
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
             
-            # Compute the control coefficients beta
-            fx = np.concatenate(self.hList, axis=0)
-            # px = np.concatenate(self.pxList, axis=0)
-            # qx = np.concatenate(self.qxList, axis=0)
-            px = np.concatenate(self.logpxList, axis=0)
-            qx = np.concatenate(self.logqxList, axis=0)
-        
-        # Otherwise, use cumulative estimate that excludes zeroth stage
-        else:
-            
-            # Compute the control coefficients beta
-            fx = np.concatenate(self.hList[1:], axis=0)
-            # px = np.concatenate(self.pxList[1:], axis=0)
-            # qx = np.concatenate(self.qxList[1:], axis=0)
-            px = np.concatenate(self.logpxList[1:], axis=0)
-            qx = np.concatenate(self.logqxList[1:], axis=0)
-            
-        beta,_qx,qx_alpha = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
-            
-        _rho = np.mean((fx * np.exp(px) - np.exp(_qx) @ beta)/np.exp(qx_alpha)) + np.sum(beta)
-        
-        # numerator = fx * np.exp(px) - np.exp(_qx) @ beta
-        # product,posPart,negPart = splitExpSumLog(numerator)
-        
-        # product,posPart,negPart = splitExpSumLog(np.repeat(beta,_qx.shape[0],axis=1).T, _qx)
-        
-        # with warnings.catch_warnings():
-        #     warnings.simplefilter("ignore")
-        #     # _rho = np.mean((fx * np.exp(px) -\
-        #     #                 (np.exp(posPart-).filled(0)-np.exp(negPart).filled(0)))/qx_alpha) + np.sum(beta)
+            # Use consistent unbiased estimator for zeroth stage
+            if len(self.X)==1:
                 
-        #     _rho = np.mean(fx * np.exp(px-qx_alpha) -\
-        #                     np.sum(np.exp(posPart-qx_alpha).filled(0)-\
-        #                     np.exp(negPart-qx_alpha).filled(0),axis=-1,keepdims=True)) + np.sum(beta)
-    
+                # Compute the control coefficients beta
+                fx = np.concatenate(self.hList, axis=0)
+                # px = np.concatenate(self.pxList, axis=0)
+                # qx = np.concatenate(self.qxList, axis=0)
+                px = np.concatenate(self.logpxList, axis=0)
+                qx = np.concatenate(self.logqxList, axis=0)
+            
+            # Otherwise, use cumulative estimate that excludes zeroth stage
+            else:
+                
+                # Compute the control coefficients beta
+                fx = np.concatenate(self.hList[1:], axis=0)
+                # px = np.concatenate(self.pxList[1:], axis=0)
+                # qx = np.concatenate(self.qxList[1:], axis=0)
+                px = np.concatenate(self.logpxList[1:], axis=0)
+                qx = np.concatenate(self.logqxList[1:], axis=0)
+                
+            beta,_qx,qx_alpha = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
+            _qx,qx_alpha = _qx.astype(np.float128),qx_alpha.astype(np.float128)
+                
+            _rho = np.mean((fx * np.exp(px) - np.exp(_qx) @ beta)/np.exp(qx_alpha)) + np.sum(beta)
+            
+            # numerator = fx * np.exp(px) - np.exp(_qx) @ beta
+            # product,posPart,negPart = splitExpSumLog(numerator)
+            
+            # product,posPart,negPart = splitExpSumLog(np.repeat(beta,_qx.shape[0],axis=1).T, _qx)
+            
+            # with warnings.catch_warnings():
+            #     warnings.simplefilter("ignore")
+            #     # _rho = np.mean((fx * np.exp(px) -\
+            #     #                 (np.exp(posPart-).filled(0)-np.exp(negPart).filled(0)))/qx_alpha) + np.sum(beta)
+                    
+            #     _rho = np.mean(fx * np.exp(px-qx_alpha) -\
+            #                     np.sum(np.exp(posPart-qx_alpha).filled(0)-\
+            #                     np.exp(negPart-qx_alpha).filled(0),axis=-1,keepdims=True)) + np.sum(beta)
+        
         try:
             assert(not np.isnan(_rho))
             assert(_rho>=0)
@@ -598,6 +616,51 @@ class CEMSEIS(cem.CEM):
          
         return alpha,mu,sigma
     
+    def getMCE(self,params):
+        """
+        Get the MCE in the case where we are fitting a multivariate Gaussian
+        (not a GMM)
+
+        Parameters
+        ----------
+        params : TYPE
+            DESCRIPTION.
+
+        Raises
+        ------
+        e
+            DESCRIPTION.
+
+        Returns
+        -------
+        TYPE
+            DESCRIPTION.
+        TYPE
+            DESCRIPTION.
+        TYPE
+            DESCRIPTION.
+
+        """
+        
+        covar_regularization = self.covar_regularization #Add ridge to covar matrix to prevent numerical instability
+        
+        # To make this code (slightly) more readable
+
+        # X,q = np.concatenate(self.X_gmm,axis=0),self.q
+        X,q = np.concatenate(self.X,axis=0),self.q
+        
+        log_r_div_q = np.concatenate(self.Hx_WxList,axis=0)
+        
+        # Compute new alpha, mu
+        log_sum_r_div_q = logsumexp(log_r_div_q)
+        
+        weights = np.exp(log_r_div_q - log_sum_r_div_q)
+        mu = np.sum(weights * X,axis=0)
+        diff = X - mu
+        Sigma = np.sum(weights[:,:,None] * diff[:,None,:] * diff[:,:,None],axis=0)
+        
+        return np.ones((1,)),mu[None,:],Sigma[None,:,:]
+    
     def updateParams(self,params,eps=1e-2,condThresh=1e5,maxiter=10,retCE=False):
         """
         Update params by performing EM iterations until converged
@@ -624,55 +687,86 @@ class CEMSEIS(cem.CEM):
         converged  = False
         ce_old = np.inf
         
-        # Loop until EM converges
-        while not converged and i < maxiter:
-            
-            # Perform a single EM iteration
-            alpha,mu,sigma = self.emIteration(params)
-            
-            # If alpha is -1, we had an error taking log likelihood
-            if type(alpha)==int and alpha==-1:
-                return params,np.inf
-            
-            # Check if the EM iteration resulted in alpha=0
-            if type(alpha)!=np.ndarray:
-                if alpha == -1:
+        if params.k() > 1:
+            # Loop until EM converges
+            while not converged and i < maxiter:
                 
-                    if retCE:
-                        return -1,None
+                # Perform a single EM iteration
+                alpha,mu,sigma = self.emIteration(params)
+                
+                # If alpha is -1, we had an error taking log likelihood
+                if type(alpha)==int and alpha==-1:
+                    return params,np.inf
+                
+                # Check if the EM iteration resulted in alpha=0
+                if type(alpha)!=np.ndarray:
+                    if alpha == -1:
+                    
+                        if retCE:
+                            return -1,None
+                        else:
+                            return -1
+                
+                # Check to make sure that the new covar matrices are well-conditioned
+                condNum = np.linalg.cond(sigma.astype(np.float64))
+                if np.any(condNum>condThresh):
+                    
+                    # Let's check if the the GMM with one component is concentrating on one observation
+                    if params.k() < 2:
+                        X = np.concatenate(self.X,axis=0)
+                        dist = np.linalg.norm(X-mu,axis=0)
+                        concentrated = np.sum(dist==0)>0
+                        
+                        if concentrated:
+                            print('The GMM has concentrated on a single observation!')
+                    
+                    # If covar is not well conditioned (i.e. model is overfit), abort the EM procedure
+                    if not retCE:
+                        return None
                     else:
-                        return -1
-            
-            # Check to make sure that the new covar matrices are well-conditioned
-            condNum = np.linalg.cond(sigma.astype(np.float64))
-            if np.any(condNum>condThresh):
+                        errStr = ''
+                        if params.k()==1:
+                            numEventsOcc = np.zeros(len(self.X))
+                            for i in range(len(self.X)):
+                                numEventsOcc[i] = np.sum(self.rList[i]>0)
+                            kList = [_params.k() for _params in self.paramsList]                                
+                            errStr = 'condition number of Sigma: {} \n'.format(condNum)+\
+                                'Number of obs. which correspond to event occuring at each stage:{} \n'.format(numEventsOcc)+\
+                                'k selected at each stage: {} \n'.format(kList)
+                        return errStr,None
                 
-                # If covar is not well conditioned (i.e. model is overfit), abort the EM procedure
-                if not retCE:
-                    return None
-                else:
-                    errStr = ''
-                    if params.k()==1:
-                        numEventsOcc = np.zeros(len(self.X))
-                        for i in range(len(self.X)):
-                            numEventsOcc[i] = np.sum(self.rList[i]>0)
-                        kList = [_params.k() for _params in self.paramsList]                                
-                        errStr = 'condition number of Sigma: {} \n'.format(condNum)+\
-                            'Number of obs. which correspond to event occuring at each stage:{} \n'.format(numEventsOcc)+\
-                            'k selected at each stage: {} \n'.format(kList)
-                    return errStr,None
+                # Update the params using the result of single EM iteration
+                params.update(alpha,mu,sigma)
+                
+                # Compute cross-entropy for the updated params
+                # ce = self.c_bar(params,gmm=True)
+                try:
+                    ce = self.c_bar(params,gmm=False)
+                except RuntimeWarning as e:
+                    
+                    # If this happens, we just consider it a failure
+                    if str(e)=='overflow encountered in double_scalars' or\
+                        str(e)=='overflow encountered in square':
+                        if retCE:
+                            return -1,None
+                        else:
+                            return -1
+                    else:
+                        raise e
+                
+                # Compute the change in cross-entropy
+                converged = (ce_old - ce) < eps*np.abs(ce_old)
+                ce_old = ce
+                i += 1
+        else:
+            
+            alpha,mu,sigma = self.getMCE(params)
             
             # Update the params using the result of single EM iteration
             params.update(alpha,mu,sigma)
             
             # Compute cross-entropy for the updated params
-            # ce = self.c_bar(params,gmm=True)
             ce = self.c_bar(params,gmm=False)
-            
-            # Compute the change in cross-entropy
-            converged = (ce_old - ce) < eps*np.abs(ce_old)
-            ce_old = ce
-            i += 1
 
         if not retCE:
             return params
@@ -718,8 +812,7 @@ class CEMSEIS(cem.CEM):
         # Window size for computing CIC moving average
         windowSize=4
         
-        # Draw samples from previous best GMMParams
-        # TODO : draw some samples from nominal density instead as per paper
+        # Draw samples from previous best GMMParams and from nominal density
         if not self.variableSampleSizes:
             nSamples = self.sampleSize
             
@@ -753,9 +846,9 @@ class CEMSEIS(cem.CEM):
             log_px = self.p(x) # this actually computes the log density
             log_qx = log_q_theta(x)
             
-            self.pxList.append(np.exp(log_px))
+            # self.pxList.append(np.exp(log_px))
             self.logpxList.append(log_px)
-            self.qxList.append(np.exp(log_qx))
+            # self.qxList.append(np.exp(log_qx))
             self.logqxList.append(log_qx)
             
             gmmStIndex = int(np.ceil(nSamples * self.alpha))
