@@ -8,15 +8,12 @@ Created on Thu Oct  8 07:29:55 2020
 
 import scipy.stats as stat
 import numpy as np
-import multiprocessing as mp
-import csv
 import matplotlib.pyplot as plt
 
 # Import cem test version (stored locally, NOT a package!)
 import cemSEIS as cem
-from cem import q as getGmmPDF
 from cem import getAverageDensityFn as getAvgGmmPDF
-# import simengine as se
+import mh
 
 def h_mu(theta,mu,sigma):
     """
@@ -45,10 +42,29 @@ def h_mu(theta,mu,sigma):
     '''
     # beta,logSigma = theta[:,:-1],theta[:,-1]
     beta = theta
-    density = stat.multivariate_normal.logpdf(beta,mean=mu,cov=sigma)
-    # density = np.exp(density_beta + stat.norm.logpdf(logSigma,0,np.sqrt(2)))
+
+    if len(beta.shape) > 1:
+            inPosOrthant = np.all(beta>=0,axis=1)
+    else:
+        inPosOrthant = np.array([np.all(beta>=0),])
     
-    return np.expand_dims(np.exp(density),axis=1)
+    density = stat.multivariate_normal.pdf(beta,mean=mu,cov=sigma)
+    
+    if len(beta.shape) > 1:
+        density[np.logical_not(inPosOrthant)] = 0
+        density = np.expand_dims(density,axis=1)
+    else:
+        density = density if inPosOrthant else 0
+    
+    try:
+        assert(not np.any(np.isnan(density)))
+        
+    except Exception as e:
+        print('Error getting prior density')
+        raise e
+    
+    return density
+    
 
 def p_x(theta,X,sigma):
     """
@@ -78,15 +94,21 @@ def p_x(theta,X,sigma):
     # beta,logSigma = theta[:,:-1],theta[:,-1]
     beta = theta
     # sigma = np.exp(logSigma)
-    log_results = np.zeros((beta.shape[0],))
+    
     _X,_Y = X[:,:-1].astype(np.float128),X[:,-1].astype(np.float128)
     # _X = np.concatenate([_X,np.ones((_X.shape[0],1))],axis=1) if len(X.shape)>1 else np.concatenate([_X[:,None],np.ones((_X.shape[0],1))],axis=1)
     
-    for i in range(beta.shape[0]):
-        # log_results[i] = np.sum(stat.norm.logpdf(_Y,_X @ beta[i],sigma[i]))
-        log_results[i] = np.sum(stat.norm.logpdf(_Y-_X @ beta[i],0,sigma))
+    if len(beta.shape) > 1:
+        
+        log_results = np.zeros((beta.shape[0],))
+        for i in range(beta.shape[0]):
+            log_results[i] = np.sum(stat.norm.logpdf(_Y-_X @ beta[i],0,sigma))
+        log_results = log_results[:,None]
     
-    return log_results[:,None]
+    else:
+        log_results = np.sum(stat.norm.logpdf(Y.squeeze() - _X @ beta,0,sigma)).astype(np.float128)
+    
+    return log_results
 
 def samplingOracle_mu(n,mu,sigma):
     """
@@ -152,8 +174,8 @@ def plotGMM(params,q,_ax=None,circle=False):
         
     ax.set_xlabel(r'$\beta_1$')
     ax.set_ylabel(r'$\beta_0$')
-    ax.set_xlim(-1,3)
-    ax.set_ylim(-1,3)
+    ax.set_xlim(0,3.5)
+    ax.set_ylim(0,3.5)
     
     return ax
 
@@ -182,8 +204,24 @@ def plotMVN(mu,sigma,_ax=None,circle=False):
         
     ax.set_xlabel(r'$\beta_1$')
     ax.set_ylabel(r'$\beta_0$')
-    ax.set_xlim(-1,3)
-    ax.set_ylim(-1,3)
+    ax.set_xlim(0,3.5)
+    ax.set_ylim(0,3.5)
+    
+    return ax
+
+def plotSamples(samples,_ax=None):
+    
+    if _ax is None:
+        fig,ax = plt.subplots(1)
+    else:
+        ax = _ax
+        
+    ax.scatter(samples[:,0],samples[:,1])
+        
+    ax.set_xlabel(r'$\beta_1$')
+    ax.set_ylabel(r'$\beta_0$')
+    ax.set_xlim(0,3.5)
+    ax.set_ylim(0,3.5)
     
     return ax
 
@@ -239,8 +277,8 @@ def runReplicate(seed,mu_prior,sigma_prior,XY,sigma):
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    sampleSize = [200,] + [50,]*4 + [100]
-    # sampleSize = [1000,]
+    # sampleSize = [200,] + [50,]*4 + [100]
+    sampleSize = [100,] + [25,]*4 + [50]
     
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,
                             numIters=len(sampleSize),
@@ -262,7 +300,7 @@ def runReplicate(seed,mu_prior,sigma_prior,XY,sigma):
 
 if __name__ == '__main__':
     
-    np.random.seed(123456)
+    np.random.seed(123457)
     
     dataDim = 2
     
@@ -284,15 +322,8 @@ if __name__ == '__main__':
     
     # Define the prior's parameters
     mu_prior = np.zeros(2)
-    sigma_prior = np.eye(2)
+    sigma_prior = 3*np.eye(2)
     
-    # # Create multiprocessing pool w/ 28 nodes for Hyak cluster
-    # with mp.Pool(28) as _pool:
-    #     result = _pool.map_async(runReplicate,
-    #                               list(seeds),
-    #                               callback=lambda x : print('Done!'))
-    #     result.wait()
-    #     resultList = result.get()
     rhoList = []
     paramsList = []
     for seed in list(seeds):
@@ -300,18 +331,32 @@ if __name__ == '__main__':
         rhoList.append(rho)
         paramsList.append(params)
     
-    # throw out params with zero covar matrices
-    # paramsList = list(filter(lambda p : not np.all(p.get()[-1]==0),paramsList))
-    
     # average all of the GMM densities
     
     # make a grid and show the density
     fig,axes = plt.subplots(1,2)
     plotGMM(paramsList, getAvgGmmPDF, axes[0])
-    mu_posterior,sigma_posterior = getPosterior(mu_prior, sigma_prior, sigma, X, Y)
-    plotMVN(mu_posterior, sigma_posterior, axes[1])
+    
+    # get an approximation using Metropolis-Hastings
+    def h(theta): 
+        return h_mu(theta, mu_prior, sigma_prior)
+    
+    def p(theta):
+        return p_x(theta,XY,sigma)
+    
+    def g(x):
+        return np.exp(p(x))*h(x)
+    
+    samples = mh.metropolis_hastings(g,dataDim,250)
+    
+    plotSamples(samples, axes[1])
+    
+    betaHat = np.linalg.pinv(X.T @ X) @ X.T @ Y
     
     axes[0].set_title('GMM Approximation')
-    axes[1].set_title('True Posterior Distribution')
+    axes[1].set_title('Metropolis-Hastings Approximation')
     
+    axes[0].scatter(3,1,color='orange')
+    axes[1].scatter(3,1,color='orange')
+    fig.suptitle(r'$\beta_1=3$, $\beta_0=1$')
     

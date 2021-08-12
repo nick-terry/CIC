@@ -67,6 +67,10 @@ class GMMParams:
         assert(sigma.shape[0]==alpha.shape[0])
         assert(sigma.shape[1]==dataDim and sigma.shape[2]==dataDim)
         
+        assert(not np.any(np.isnan(alpha)))
+        assert(not np.any(np.isnan(mu)))
+        assert(not np.any(np.isnan(sigma)))
+        
         # Make sure we don't have a nearly-singular covar matrix
         for i in range(alpha.shape[0]):
             assert(np.any(np.abs(sigma[i])>1e-100))
@@ -93,6 +97,11 @@ class GMMParams:
         assert(mu.shape[1]==self._dataDim)
         assert(sigma.shape[0]==alpha.shape[0])
         assert(sigma.shape[1]==self._dataDim and sigma.shape[2]==self._dataDim)
+        
+        assert(not np.any(np.isnan(alpha)))
+        assert(not np.any(np.isnan(mu)))
+        assert(not np.any(np.isnan(sigma)))
+        
         
         # Make sure we don't have a nearly-singular covar matrix
         for i in range(alpha.shape[0]):
@@ -269,22 +278,23 @@ class CEMSEIS(cem.CEM):
             beta,_qx,qx_alpha = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
             _qx,qx_alpha = _qx.astype(np.float128),qx_alpha.astype(np.float128)
                 
-            _rho = np.mean((fx * np.exp(px) - np.exp(_qx) @ beta)/np.exp(qx_alpha)) + np.sum(beta)
+            _rho = np.mean((np.exp(np.log(fx) + px) - np.exp(_qx) @ beta)/np.exp(qx_alpha)) + np.sum(beta)
             
-            # numerator = fx * np.exp(px) - np.exp(_qx) @ beta
-            # product,posPart,negPart = splitExpSumLog(numerator)
+            numerator = fx * np.exp(px) - np.exp(_qx) @ beta
+            product,posPart,negPart = splitExpSumLog(numerator)
             
-            # product,posPart,negPart = splitExpSumLog(np.repeat(beta,_qx.shape[0],axis=1).T, _qx)
+            product,posPart,negPart = splitExpSumLog(np.repeat(beta,_qx.shape[0],axis=1).T, _qx)
             
-            # with warnings.catch_warnings():
-            #     warnings.simplefilter("ignore")
-            #     # _rho = np.mean((fx * np.exp(px) -\
-            #     #                 (np.exp(posPart-).filled(0)-np.exp(negPart).filled(0)))/qx_alpha) + np.sum(beta)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                # _rho = np.mean((fx * np.exp(px) -\
+                #                 (np.exp(posPart-).filled(0)-np.exp(negPart).filled(0)))/qx_alpha) + np.sum(beta)
                     
-            #     _rho = np.mean(fx * np.exp(px-qx_alpha) -\
-            #                     np.sum(np.exp(posPart-qx_alpha).filled(0)-\
-            #                     np.exp(negPart-qx_alpha).filled(0),axis=-1,keepdims=True)) + np.sum(beta)
-        
+                _rho = np.mean(fx * np.exp(px-qx_alpha) -\
+                                np.sum(np.exp(posPart-qx_alpha).filled(0)-\
+                                np.exp(negPart-qx_alpha).filled(0),axis=-1,keepdims=True)) + np.sum(beta)
+            _rho = np.maximum(_rho,0)
+            
         try:
             assert(not np.isnan(_rho))
             assert(_rho>=0)
@@ -766,7 +776,11 @@ class CEMSEIS(cem.CEM):
             params.update(alpha,mu,sigma)
             
             # Compute cross-entropy for the updated params
-            ce = self.c_bar(params,gmm=False)
+            try:
+                ce = self.c_bar(params,gmm=False)
+            except Exception as e:
+                print(e)
+                raise e
 
         if not retCE:
             return params
@@ -808,9 +822,6 @@ class CEMSEIS(cem.CEM):
                 kMax = min(kMax,np.floor((max_free_param+1)/(2*X.shape[1] + 1)))
             elif self.covarStruct=='full':
                 kMax = min(kMax,np.floor((max_free_param+1)/(X.shape[1] + (X.shape[1]*(X.shape[1]+1))/2 + 1)))
-        
-        # Window size for computing CIC moving average
-        windowSize=4
         
         # Draw samples from previous best GMMParams and from nominal density
         if not self.variableSampleSizes:
@@ -885,10 +896,6 @@ class CEMSEIS(cem.CEM):
         self.hList.append(Hx)
         self.Hx_WxList.append(log_Hx_Wx)
         
-        bestParamsList = []
-        cicList = []
-        cicMA = []
-        
         # Make sure we have enough non-zero Hx values that we can account for all DOF in GMM.
         if s == 0:
             Hx_Wx_total = np.concatenate(self.Hx_WxList, axis=0)    
@@ -900,6 +907,52 @@ class CEMSEIS(cem.CEM):
         if numUsableObs < params.dim() + 3:
             return None,None,None
         
+        # Otherwise, try to run the EM algo
+        else:
+            
+            maxInitTries = 5
+            for attempt in range(maxInitTries):
+                results = self.emFit(s,kMin,kMax,numInitParams,params,numUsableObs)
+                
+                # Check to make sure the EM algo worked
+                if results[0] is not None:
+                    return results
+                
+        raise(Exception('Unable to fit any GMM to the data!'))
+            
+            
+        
+    def emFit(self,s,kMin,kMax,numInitParams,params,numUsableObs):
+        """
+        Fit the GMM to the data using the EM algorithm.
+
+        Parameters
+        ----------
+        s : TYPE
+            DESCRIPTION.
+        kMin : TYPE
+            DESCRIPTION.
+        kMax : TYPE
+            DESCRIPTION.
+        numInitParams : TYPE
+            DESCRIPTION.
+        params : TYPE
+            DESCRIPTION.
+        numUsableObs : TYPE
+            DESCRIPTION.
+
+        Raises
+        ------
+        e
+            DESCRIPTION.
+
+        Returns
+        -------
+        TYPE
+            DESCRIPTION.
+
+        """
+        
         # Run EM for different values of k to find best GMM fit
         k = kMin
         kTooBig = False
@@ -907,6 +960,13 @@ class CEMSEIS(cem.CEM):
         maIncr = False
         resetCounter = 0
         runStageCounter = 0
+        
+        # Window size for computing CIC moving average
+        windowSize=4
+        
+        bestParamsList = []
+        cicList = []
+        cicMA = []
     
         # Keep increasing k until we abort more than 50% of EM trials
         while not kTooBig and not maIncr and k <= kMax:
@@ -1048,7 +1108,7 @@ class CEMSEIS(cem.CEM):
             # runStageCounter += 1
             # print('iterations in this stage: {}'.format(runStageCounter))
         
-        # Verify that we have computed the CIC for each param
+        # If all of the initial parameters resulted in a failed EM alg., return None
         try:
             assert(len(cicList)>0)
         except Exception as e:
@@ -1057,12 +1117,18 @@ class CEMSEIS(cem.CEM):
             print('kMax: {}'.format(kMax))
             print('Number of CIC values computed: {}'.format(len(cicList)))
             print('Current k value: {}'.format(k))
-            raise e
-        
+            print()
+            print(e)
+            
+            return None,None,None
+            
         try:
             assert(len(cicList)==len(bestParamsList))
         except Exception as e:
             print('Number of CIC values does not match the number of parameters!')
-            raise e
-        
+            print()
+            print(e)
+            
         return bestParamsList,cicList,cicMA
+    
+    
