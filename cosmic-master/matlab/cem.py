@@ -223,6 +223,8 @@ class CEM:
         llh = log_q_theta(X)
         
         n = llh.shape[0]
+        
+        # TODO: maybe undo this change
         _c_bar = np.log(1/n)-spc.logsumexp(llh + np.concatenate(self.Hx_WxList))
         
         return _c_bar
@@ -381,7 +383,9 @@ class CEM:
                 log_densities = np.expand_dims(spc.logsumexp(np.log(_alpha)+log_densities,axis=1),axis=1)
             
             except np.linalg.LinAlgError as e:
-                print('Singular covariance matrix in the GMM!')    
+                print('Singular covariance matrix in the GMM!')
+                print(e)
+                self.errored = True
             
             return log_densities
         
@@ -877,11 +881,7 @@ class CEM:
                 covar = np.cov(XBar,rowvar=False)
                 tr = np.trace(covar) if len(covar.shape)>0 else covar
                 
-                # In case the trace is so small that we get some numerical issues in EM
-                if tr > 1e-100:
-                    covar = 3/p*tr*np.eye(p) + np.eye(p) * self.covar_regularization
-                else:
-                    covar  = 3/p*np.eye(p)
+                covar = 3/p*tr*np.eye(p) + np.eye(p) * self.covar_regularization
                 
                 # check that we are not somehow outputting zero matrix
                 try:
@@ -889,8 +889,13 @@ class CEM:
                 except:
                     print('Init params for the GMM has a degenerate covar matrix (all zeros)')
                     print(XBar)
+                    
+                    covar = 3/p*np.eye(p)
                 
                 covar = np.tile(np.expand_dims(covar,axis=0),(k,1,1))
+                
+                # In case the trace is so small that we get some numerical issues in EM
+                covar = self.spectralClipping(covar)
                 
                 # Create GMMParams object and add to list
                 initParams  = GMMParams(np.ones(k)/k, XBar, covar, p)
@@ -900,6 +905,21 @@ class CEM:
             
         return initParamsList
      
+    def spectralClipping(self,sigma):
+        # Apply the spectral heuristic from Coretto and Hennig, 2016
+        
+        # Get eigen decomposition of covar matrices
+        v,W = np.linalg.eig(sigma.astype(np.float64))
+        lambda_max = np.max(v)
+        
+        # Set each eigenvalue lambda to be max(lambda_max,lambda)
+        v = np.maximum(v,lambda_max/self.gamma*np.ones_like(v))
+        
+        # Reconstruct covar matrices from the decomposition
+        for k in range(sigma.shape[0]):
+            sigma[k] = (W[k] @ np.diag(v[k]) @ np.linalg.inv(W[k])).astype(np.float128)
+        
+        return sigma
     
     def runStage(self,s,params,kMin,kMax=30,numInitParams=10):
         """
@@ -1324,5 +1344,43 @@ def getAverageDensityFn(paramsList):
         return densities
     
     return _q
+
+def generateX(params,num=1):
+    """
+    Randomly generate a vector from GMM
+
+    Parameters
+    ----------
+    params: GMMParams
+        Estimated importance sampling distribution params.
+    num : positive int
+        Number of contingencies to generate.
+
+    Returns
+    -------
+    x : numpy array
+        Contingency vector(s).
+
+    """
+    # Randomly choose the mixture components to generate from
+    alpha,mu,sigma = params.get()
+    if params.k() > 1:
+        try:
+            mixtureComponents = np.random.choice(np.array(range(params.k())),size=(num,),p=alpha.squeeze().astype(np.float64))
+        except Exception as e:
+            print(alpha.squeeze())
+            print(np.sum(alpha.squeeze()))
+            raise e
+    else:
+        mixtureComponents = np.zeros(shape=(num,)).astype(int)
+
+    # Generate the vectors from the mixture components
+    x = np.zeros(shape=(num,mu.shape[1]))
+    for i,mixtureComponent in enumerate(mixtureComponents):
+        _mu = mu[mixtureComponent,:]
+        _sigma = sigma[mixtureComponent,:,:]
+        x[i,:] = np.random.RandomState().multivariate_normal(_mu,_sigma)
+    
+    return x.astype(np.longdouble)
         
         

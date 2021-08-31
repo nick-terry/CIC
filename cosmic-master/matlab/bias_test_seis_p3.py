@@ -12,7 +12,7 @@ import numpy as np
 import multiprocessing as mp
 import csv
 import pickle
-import circlePacking as circ
+# import circlePacking as circ
 import matplotlib.pyplot as plt
 
 from cem import q as getGmmPDF
@@ -21,7 +21,7 @@ from cem import q as getGmmPDF
 import cemSEIS as cem
 # import simengine as se
 
-d = 2
+d = 3
 
 # load lookup table for simulation results
 with open('simDict_10.pck','rb') as f:
@@ -110,12 +110,13 @@ def runReplicate(seed):
     #sim = se.SimulationEngine()
     # dataDim = sim.numBranches
     dataDim = d
+    R = .25
     
     def h(x):
         
-        failed = np.product(1 * (x > 1.5), axis=1, keepdims=True)
-        # A = np.eye(dataDim)
-        # failed = np.sum((x @ A) * x,axis=1,keepdims=True)<=.1
+        # failed = np.product(1 * (x > 1.5), axis=1, keepdims=True)
+        A = np.eye(dataDim)
+        failed = np.sum((x @ A) * x,axis=1,keepdims=True)<= R
         
         return failed
     
@@ -143,7 +144,7 @@ def runReplicate(seed):
 
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    sampleSize = [8000,] + [2000,]*4 + [4000]
+    sampleSize = [4000,] + [1000,]*4 + [2000]
     
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,
                             numIters=len(sampleSize),
@@ -152,20 +153,23 @@ def runReplicate(seed):
                             log=True,
                             verbose=True,
                             covar='homogeneous',
-                            alpha=.1)
+                            alpha=.1,
+                            seis=True)
     procedure.run()
     
     # Estimate the failure probability
     rho = procedure.rho()
     k = procedure.paramsList[-1].k()
+    errored = procedure.errored
+    covardiag = procedure.paramsList[-1].get()[-1][0,0,0]
     
     print('Done with replicate!')
     
-    return rho,k
+    return rho,k,errored,covardiag
 
 if __name__ == '__main__':
     
-    np.random.seed(420)
+    np.random.seed(4123)
     
     # Use importance sampling to estimate probability of cascading blackout given
     # a random N-2 contingency.
@@ -173,7 +177,7 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 100
+    numReps = 10
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
@@ -187,19 +191,25 @@ if __name__ == '__main__':
     #     resultList = result.get()
     rhoList = []
     for seed in list(seeds):
-        rho,ce = runReplicate(seed)
+        rho,ce,_,_ = runReplicate(seed)
         rhoList.append(rho)
     
     toCsvList = [[rho,] for rho in rhoList]
     # rhoList = [item[0] for item in resultList]
-    # toCsvList = [[item[0],item[1]] for item in resultList]
+    # toCsvList = [[item[0],item[1],item[2],item[3]] for item in resultList]
+    
+    mean = np.mean(rhoList)
+    stdErr = stat.sem(rhoList)
+    hw = 1.96 * stdErr / np.sqrt(numReps)
     
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
+    
+    print('95% CI for rho_bar: [{:.5f},{:.5f}]'.format(mean-hw,mean+hw))
     # Save the estimates of failure probabilty to csv
-    with open('bias_results_p2.csv','w') as f:
-        writer = csv.writer(f)
-        # Header row
-        writer.writerow(['rho','final_k'])
-        writer.writerows(toCsvList)
+    # with open('bias_results_p3.csv','w') as f:
+    #     writer = csv.writer(f)
+    #     # Header row
+    #     writer.writerow(['rho','final_k','had_error','covardiag'])
+    #     writer.writerows(toCsvList)
     

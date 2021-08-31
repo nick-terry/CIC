@@ -21,7 +21,7 @@ import cemSEIS as cem
 with open('simDict_10.pck','rb') as f:
     hDict = pickle.load(f)
 
-d = 2
+d = 3
 
 def p(x):
     """
@@ -152,8 +152,6 @@ def runReplicate(seed):
     # Set covariance matrix to be identity
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
 
-    # Set covariance matrix to be identity
-    sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
     sampleSize = [8000,] + [2000,]*4 + [4000]

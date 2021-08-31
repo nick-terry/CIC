@@ -128,7 +128,7 @@ class GMMParams:
 
 class CEMSEIS(cem.CEM):
     
-    def __init__(self,initParams,p,samplingOracle,h,alpha=.1,**kwargs):
+    def __init__(self,initParams,p,samplingOracle,h,alpha=.1,gamma=None,**kwargs):
         """
         Create a new CEMSEIS 
         (Cross-Entropy Minimizer w/ Safe and Effective Importance Sampling).
@@ -158,6 +158,7 @@ class CEMSEIS(cem.CEM):
         self.samplingOracle = samplingOracle
         self.h = h
         self.alpha = alpha 
+        self.gamma = gamma if gamma is not None else 100
         
         # Store some likelihoods/function evals to avoid recomputing
         self.hList = []
@@ -171,7 +172,9 @@ class CEMSEIS(cem.CEM):
 
         # Store some historical data as procedure is executed
         self.bestParamsLists = []
-        self.cicLists = [] 
+        self.cicLists = []
+        
+        self.errored = False
         
         # Some important constants which can be changed     
         # Set jitter used to prevent numerical issues due to zero densities
@@ -233,6 +236,11 @@ class CEMSEIS(cem.CEM):
         else:
             self.repNum = -1
             
+        if 'seis' in kwargs:
+            self.seis = kwargs['seis']
+        else:
+            self.seis = True
+            
         self.cicArray = np.zeros(shape=(self.numIters,1))
         
         # self.covar_regularization = 10**-100
@@ -274,26 +282,30 @@ class CEMSEIS(cem.CEM):
                 # qx = np.concatenate(self.qxList[1:], axis=0)
                 px = np.concatenate(self.logpxList[1:], axis=0)
                 qx = np.concatenate(self.logqxList[1:], axis=0)
-                
-            beta,_qx,qx_alpha = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
-            _qx,qx_alpha = _qx.astype(np.float128),qx_alpha.astype(np.float128)
-                
-            _rho = np.mean((np.exp(np.log(fx) + px) - np.exp(_qx) @ beta)/np.exp(qx_alpha)) + np.sum(beta)
+    
+            if not self.seis:
+                _rho = np.mean(fx * np.exp(px-qx))
             
-            numerator = fx * np.exp(px) - np.exp(_qx) @ beta
-            product,posPart,negPart = splitExpSumLog(numerator)
-            
-            product,posPart,negPart = splitExpSumLog(np.repeat(beta,_qx.shape[0],axis=1).T, _qx)
-            
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                # _rho = np.mean((fx * np.exp(px) -\
-                #                 (np.exp(posPart-).filled(0)-np.exp(negPart).filled(0)))/qx_alpha) + np.sum(beta)
+            else:
+                beta,_qx,qx_alpha = defensiveIS.getBeta2Mix(fx,px,qx,self.alpha)
+                _qx,qx_alpha = _qx.astype(np.float128),qx_alpha.astype(np.float128)
                     
-                _rho = np.mean(fx * np.exp(px-qx_alpha) -\
-                                np.sum(np.exp(posPart-qx_alpha).filled(0)-\
-                                np.exp(negPart-qx_alpha).filled(0),axis=-1,keepdims=True)) + np.sum(beta)
-            _rho = np.maximum(_rho,0)
+                _rho = np.mean((np.exp(np.log(fx) + px) - np.exp(_qx) @ beta)/np.exp(qx_alpha)) + np.sum(beta)
+                
+                numerator = fx * np.exp(px) - np.exp(_qx) @ beta
+                product,posPart,negPart = splitExpSumLog(numerator)
+                
+                product,posPart,negPart = splitExpSumLog(np.repeat(beta,_qx.shape[0],axis=1).T, _qx)
+                
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    # _rho = np.mean((fx * np.exp(px) -\
+                    #                 (np.exp(posPart-).filled(0)-np.exp(negPart).filled(0)))/qx_alpha) + np.sum(beta)
+                        
+                    _rho = np.mean(fx * np.exp(px-qx_alpha) -\
+                                    np.sum(np.exp(posPart-qx_alpha).filled(0)-\
+                                    np.exp(negPart-qx_alpha).filled(0),axis=-1,keepdims=True)) + np.sum(beta)
+                _rho = np.maximum(_rho,0)
             
         try:
             assert(not np.isnan(_rho))
@@ -610,6 +622,8 @@ class CEMSEIS(cem.CEM):
                 if len(sigma.shape)==2:
                     sigma = sigma[None,:,:]
         
+        sigma = self.spectralClipping(sigma)
+        
         # Check that there is no inf/nan values and that sigma is not singular
         try:
             assert(not np.any(np.isnan(sigma)))
@@ -664,10 +678,21 @@ class CEMSEIS(cem.CEM):
         # Compute new alpha, mu
         log_sum_r_div_q = logsumexp(log_r_div_q)
         
-        weights = np.exp(log_r_div_q - log_sum_r_div_q)
+        # If some weights are infinite, weight the corresponding X samples equally
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            infInd = np.isinf(np.exp(log_r_div_q))
+        if np.any(infInd):
+            weights = np.zeros_like(log_r_div_q)
+            weights[infInd] = 1/np.sum(infInd)
+        else:
+            weights = np.exp(log_r_div_q - log_sum_r_div_q)
+            
         mu = np.sum(weights * X,axis=0)
         diff = X - mu
         Sigma = np.sum(weights[:,:,None] * diff[:,None,:] * diff[:,:,None],axis=0)
+        
+        Sigma = self.spectralClipping(Sigma[None,:,:]).squeeze()
         
         return np.ones((1,)),mu[None,:],Sigma[None,:,:]
     
@@ -829,14 +854,19 @@ class CEMSEIS(cem.CEM):
             
         else:
             nSamples = self.sampleSize[s]
+        
+        if self.seis:
+            nominalSamples = int(np.ceil(nSamples * self.alpha))
+            gmmSamples = nSamples - nominalSamples
             
-        nominalSamples = int(np.ceil(nSamples * self.alpha))
-        gmmSamples = nSamples - nominalSamples
-        
-        xNominal = self.generateX(None,nominalSamples)
-        xGmm = self.generateX(params,gmmSamples)
-        
-        x = np.concatenate([xNominal,xGmm],axis=0)
+            xNominal = self.generateX(None,nominalSamples)
+            xGmm = self.generateX(params,gmmSamples)
+            
+            x = np.concatenate([xNominal,xGmm],axis=0)
+            
+        else:
+            xGmm = self.generateX(params,nSamples)
+            x = xGmm.copy()
         
         # Add new samples to existing samples
         if s==0:

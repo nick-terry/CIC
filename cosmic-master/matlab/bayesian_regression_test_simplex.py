@@ -49,11 +49,11 @@ def h_mu(theta,mu,sigma):
         inPosOrthant = np.array([np.all(beta>=0),])
         
     if len(beta.shape) > 1:
-            inSquare = np.all(beta<=1,axis=1)
+            sum1 = np.sum(beta,axis=1)
     else:
-        inSquare = np.array([np.all(beta<=1),])
+        sum1 = np.array([np.sum(beta),])
         
-    nonZero = np.logical_and(inPosOrthant,inSquare)
+    nonZero = np.logical_and(inPosOrthant,sum1)
     
     density = stat.multivariate_normal.pdf(beta,mean=mu,cov=sigma)
     
@@ -181,8 +181,8 @@ def plotGMM(params,q,_ax=None,circle=False):
         
     ax.set_xlabel(r'$\beta_1$')
     ax.set_ylabel(r'$\beta_0$')
-    ax.set_xlim(0,3.5)
-    ax.set_ylim(0,3.5)
+    ax.set_xlim(-1.2,1.2)
+    ax.set_ylim(-1.2,1.2)
     
     return ax
 
@@ -211,8 +211,8 @@ def plotMVN(mu,sigma,_ax=None,circle=False):
         
     ax.set_xlabel(r'$\beta_1$')
     ax.set_ylabel(r'$\beta_0$')
-    ax.set_xlim(0,3.5)
-    ax.set_ylim(0,3.5)
+    ax.set_xlim(-1.2,1.2)
+    ax.set_ylim(-1.2,1.2)
     
     return ax
 
@@ -227,8 +227,8 @@ def plotSamples(samples,_ax=None):
         
     ax.set_xlabel(r'$\beta_1$')
     ax.set_ylabel(r'$\beta_0$')
-    ax.set_xlim(0,3.5)
-    ax.set_ylim(0,3.5)
+    ax.set_xlim(-1.2,1.2)
+    ax.set_ylim(-1.2,1.2)
     
     return ax
 
@@ -239,8 +239,8 @@ def plotSamplesKDE(samples,_ax=None):
     else:
         ax = _ax
     
-    xmin,xmax = 0,3.5
-    ymin,ymax = 0,3.5
+    xmin,xmax = -1.2,1.2
+    ymin,ymax = -1.2,1.2
     k  = stat.gaussian_kde(samples.T)
     Xg, Yg = np.mgrid[xmin:xmax:100j, ymin:ymax:100j]
     positions = np.vstack([Xg.ravel(), Yg.ravel()])
@@ -249,8 +249,8 @@ def plotSamplesKDE(samples,_ax=None):
     
     ax.set_xlabel(r'$\beta_1$')
     ax.set_ylabel(r'$\beta_0$')
-    ax.set_xlim(0,3.5)
-    ax.set_ylim(0,3.5)
+    ax.set_xlim(-1.2,1.2)
+    ax.set_ylim(-1.2,1,2)
     
     return ax
 
@@ -346,7 +346,7 @@ if __name__ == '__main__':
     sigma = 1
     
     m = .6
-    b = 1
+    b = 1 - m
     
     X = stat.multivariate_normal.rvs(np.zeros((dataDim-1,)),3*np.eye(dataDim-1),size=nData)
     Y = (np.sum(m*X,axis=1,keepdims=True)+b if len(X.shape)>1 else m*X[:,None] + b) + stat.norm.rvs(0,sigma,size=(nData,1))
