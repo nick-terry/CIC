@@ -201,6 +201,8 @@ class CEM:
         Estimate the cross-entropy from the importance sampling
         distribution defined by eta, using the estimator from equation 3.7 of
         the paper.
+        
+        See eqn 3.18
     
         Parameters
         ----------
@@ -224,9 +226,11 @@ class CEM:
         
         n = llh.shape[0]
         
-        # TODO: maybe undo this change
-        _c_bar = np.log(1/n)-spc.logsumexp(llh + np.concatenate(self.Hx_WxList))
+        # _c_bar = np.log(1/n)+spc.logsumexp(np.concatenate(self.Hx_WxList)-llh)
+        _c_bar = -np.sum(np.exp(np.concatenate(self.Hx_WxList))*llh) / n
         
+        # _c_bar = np.exp(_c_bar)
+            
         return _c_bar
     
     def rho(self):
@@ -283,13 +287,15 @@ class CEM:
     
         """
         X = np.concatenate(self.X,axis=0)
+        HxWx = np.concatenate(self.Hx_WxList)
+        n = HxWx.shape[0] - np.sum(np.isinf(HxWx))
         
         # Compute dimension of model parameter space from the number of mixtures, k
         k = params.k()
         p = X.shape[1]
         d = (k-1)+k*(p+p*(p+1)/2)
         
-        _cic = self.c_bar(params) + self.rho()*d/X.shape[0]
+        _cic = self.c_bar(params) + self.rho()*d/n
 
         return _cic
     
@@ -1205,7 +1211,8 @@ class CEM:
             if s<=1:
                 kMin = 1
             else:
-                kMin = max(1,self.paramsList[-1].k()-3)
+                # kMin = max(1,self.paramsList[-1].k()-3)
+                kMin = 1
             
             try:
                 # Run the main operations of the stage

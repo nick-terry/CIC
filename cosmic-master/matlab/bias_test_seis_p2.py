@@ -150,8 +150,7 @@ def runReplicate(seed):
                             log=True,
                             verbose=True,
                             covar='homogeneous',
-                            alpha=.1,
-                            seis=False)
+                            alpha=.1)
     procedure.run()
     
     # Estimate the failure probability
@@ -240,7 +239,7 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 1
+    numReps = 2
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)

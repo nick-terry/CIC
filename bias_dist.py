@@ -22,12 +22,13 @@ import pandas as pd
 # ax.set_ylabel('Estimated event probability')
 
 # filenames = ['results_10_diag.csv','results_5_diagonal.csv','results_3_diag.csv']
-filenames = ['bias_results_p3.csv',]*2
+filenames = ['bias_results_p2.csv',]*2
 labels = ['Bias Test',]*2
 # truePVals = [.02345,.006258,.006336]
 # truePVals = [1.177475e-05,]*2
 # truePVals = [0.00816563,]*2
-truePVals = [0.03084614,]*2
+# truePVals = [0.03084614,]*2
+truePVals = [0.04875993,]*2
 
 fig,axes = plt.subplots(1,len(filenames))
 for ax,filename,label,trueP in zip(axes,filenames,labels,truePVals):

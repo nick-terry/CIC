@@ -224,7 +224,7 @@ def runReplicate(seed,mu_prior,sigma_prior,XY,sigma):
         return samplingOracle_mu(n, mu_prior, sigma_prior)
     
     # Variance of each coordinate in initial GMM
-    sigmaSq = 3
+    sigmaSq = 1
     
     # Initial guess for GMM params
     k = 10
@@ -249,7 +249,8 @@ def runReplicate(seed,mu_prior,sigma_prior,XY,sigma):
                             log=True,
                             verbose=True,
                             covar='homogeneous',
-                            allowSingular=True)
+                            allowSingular=True,
+                            seis=True)
     procedure.run()
     
     # Estimate the failure probability
@@ -266,7 +267,7 @@ if __name__ == '__main__':
     
     dataDim = 2
     
-    numReps = 10
+    numReps = 1
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
@@ -275,7 +276,7 @@ if __name__ == '__main__':
     nData = 10
     
     # this is the additive noise variance which is known
-    sigma = 1
+    sigma = 3
     
     X = stat.multivariate_normal.rvs(np.zeros((dataDim-1,)),3*np.eye(dataDim-1),size=nData)
     Y = (np.sum(3*X,axis=1,keepdims=True)+1 if len(X.shape)>1 else 3*X[:,None] + 1) + stat.norm.rvs(0,sigma,size=(nData,1))
