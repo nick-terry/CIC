@@ -153,7 +153,7 @@ def runReplicate(seed):
                             log=True,
                             verbose=True,
                             covar='homogeneous',
-                            alpha=.1,
+                            alpha=.8,
                             seis=True)
     procedure.run()
     
@@ -177,7 +177,7 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 10
+    numReps = 5
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)

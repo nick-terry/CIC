@@ -226,8 +226,11 @@ class CEM:
         
         n = llh.shape[0]
         
-        # _c_bar = np.log(1/n)+spc.logsumexp(np.concatenate(self.Hx_WxList)-llh)
-        _c_bar = -np.sum(np.exp(np.concatenate(self.Hx_WxList))*llh) / n
+        # We may get overflow here, in which case we can try to replace the
+        # offending values
+        Hx_Wx = np.nan_to_num(np.exp(np.concatenate(self.Hx_WxList)))
+        
+        _c_bar = -np.sum(Hx_Wx*llh) / n
         
         # _c_bar = np.exp(_c_bar)
             
@@ -288,7 +291,8 @@ class CEM:
         """
         X = np.concatenate(self.X,axis=0)
         HxWx = np.concatenate(self.Hx_WxList)
-        n = HxWx.shape[0] - np.sum(np.isinf(HxWx))
+        # n = HxWx.shape[0] - np.sum(np.isinf(HxWx))
+        n = X.shape[0]
         
         # Compute dimension of model parameter space from the number of mixtures, k
         k = params.k()
@@ -1211,8 +1215,8 @@ class CEM:
             if s<=1:
                 kMin = 1
             else:
-                # kMin = max(1,self.paramsList[-1].k()-3)
-                kMin = 1
+                kMin = max(1,self.paramsList[-1].k()-3)
+                # kMin = 1
             
             try:
                 # Run the main operations of the stage

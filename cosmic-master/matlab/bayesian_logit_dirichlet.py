@@ -8,12 +8,28 @@ Created on Thu Oct  8 07:29:55 2020
 
 import scipy.stats as stat
 import numpy as np
+import multiprocessing as mp
+import csv
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # Import cem test version (stored locally, NOT a package!)
 import cemSEIS as cem
+from cem import q as getGmmPDF
+from cem import generateX as sampleGmm
 from cem import getAverageDensityFn as getAvgGmmPDF
 import mh
+
+def load_data():
+    data = pd.read_csv('customers_data.csv')
+    data['Channel'] = data['Channel'] - 1 # 1 is retail, 0 is non-retail channel
+    # X = data['Fresh'].values
+    # X = data[['Fresh','Milk','Grocery','Frozen','Detergents_Paper','Delicassen']].values
+    X = data[['Fresh','Frozen']].values
+    # X = X/np.max(X,axis=0)
+    X = X/np.sum(X,axis=1)[:,None]
+    Y = data['Channel'].values
+    return X,Y[:,None]
 
 def h_mu(theta,mu,sigma):
     """
@@ -42,40 +58,17 @@ def h_mu(theta,mu,sigma):
     '''
     # beta,logSigma = theta[:,:-1],theta[:,-1]
     beta = theta
-
-    if len(beta.shape) > 1:
-            inPosOrthant = np.all(beta>=0,axis=1)
-    else:
-        inPosOrthant = np.array([np.all(beta>=0),])
-        
-    if len(beta.shape) > 1:
-            inSquare = np.all(beta<=1,axis=1)
-    else:
-        inSquare = np.array([np.all(beta<=1),])
-        
-    nonZero = np.logical_and(inPosOrthant,inSquare)
-    
     density = stat.multivariate_normal.pdf(beta,mean=mu,cov=sigma)
+    # density = np.exp(density_beta + stat.norm.logpdf(logSigma,0,np.sqrt(2)))
     
     if len(beta.shape) > 1:
-        density[np.logical_not(nonZero)] = 0
         density = np.expand_dims(density,axis=1)
-    else:
-        density = density if nonZero else 0
-    
-    try:
-        assert(not np.any(np.isnan(density)))
-        
-    except Exception as e:
-        print('Error getting prior density')
-        raise e
     
     return density
-    
 
 def p_x(theta,X,sigma):
     """
-    Compute the likelihood of theta give the data X
+    Compute the likelihood of theta given the data X
 
     Parameters
     ----------
@@ -101,19 +94,20 @@ def p_x(theta,X,sigma):
     # beta,logSigma = theta[:,:-1],theta[:,-1]
     beta = theta
     # sigma = np.exp(logSigma)
-    
+    log_results = np.zeros((beta.shape[0],))
     _X,_Y = X[:,:-1].astype(np.float128),X[:,-1].astype(np.float128)
     # _X = np.concatenate([_X,np.ones((_X.shape[0],1))],axis=1) if len(X.shape)>1 else np.concatenate([_X[:,None],np.ones((_X.shape[0],1))],axis=1)
     
     if len(beta.shape) > 1:
-        
-        log_results = np.zeros((beta.shape[0],))
         for i in range(beta.shape[0]):
-            log_results[i] = np.sum(stat.norm.logpdf(_Y-_X @ beta[i],0,sigma))
+            # log_results[i] = np.sum(stat.norm.logpdf(_Y,_X @ beta[i],sigma[i]))
+            logit = 1/(1+np.exp(-(_X @ beta[i])))
+            log_results[i] = np.sum(np.log(logit)*_Y + np.log(1-logit)*(1-_Y))
         log_results = log_results[:,None]
     
     else:
-        log_results = np.sum(stat.norm.logpdf(_Y.squeeze() - _X @ beta,0,sigma)).astype(np.float128)
+        logit = 1/(1+np.exp(-(_X @ beta)))
+        log_results = np.sum(np.log(logit)*_Y + np.log(1-logit)*(1-_Y))
     
     return log_results
 
@@ -181,8 +175,8 @@ def plotGMM(params,q,_ax=None,circle=False):
         
     ax.set_xlabel(r'$\beta_1$')
     ax.set_ylabel(r'$\beta_0$')
-    ax.set_xlim(0,1.2)
-    ax.set_ylim(0,1.2)
+    ax.set_xlim(-2.5,0)
+    ax.set_ylim(-2.5,0)
     
     return ax
 
@@ -211,8 +205,8 @@ def plotMVN(mu,sigma,_ax=None,circle=False):
         
     ax.set_xlabel(r'$\beta_1$')
     ax.set_ylabel(r'$\beta_0$')
-    ax.set_xlim(0,1.2)
-    ax.set_ylim(0,1.2)
+    ax.set_xlim(-2.5,0)
+    ax.set_ylim(-2.5,0)
     
     return ax
 
@@ -227,8 +221,8 @@ def plotSamples(samples,_ax=None):
         
     ax.set_xlabel(r'$\beta_1$')
     ax.set_ylabel(r'$\beta_0$')
-    ax.set_xlim(0,1.2)
-    ax.set_ylim(0,1.2)
+    ax.set_xlim(-2.5,0)
+    ax.set_ylim(-2.5,0)
     
     return ax
 
@@ -239,8 +233,8 @@ def plotSamplesKDE(samples,_ax=None):
     else:
         ax = _ax
     
-    xmin,xmax = 0,3.5
-    ymin,ymax = 0,3.5
+    xmin,xmax = -2.5,0
+    ymin,ymax = -2.5,0
     k  = stat.gaussian_kde(samples.T)
     Xg, Yg = np.mgrid[xmin:xmax:100j, ymin:ymax:100j]
     positions = np.vstack([Xg.ravel(), Yg.ravel()])
@@ -249,8 +243,8 @@ def plotSamplesKDE(samples,_ax=None):
     
     ax.set_xlabel(r'$\beta_1$')
     ax.set_ylabel(r'$\beta_0$')
-    ax.set_xlim(0,1.2)
-    ax.set_ylim(0,1.2)
+    ax.set_xlim(-2.5,0)
+    ax.set_ylim(-2.5,0)
     
     return ax
 
@@ -306,9 +300,9 @@ def runReplicate(seed,mu_prior,sigma_prior,XY,sigma):
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    # sampleSize = [200,] + [50,]*4 + [100]
-    # sampleSize = [100,] + [25,]*4 + [50]
-    sampleSize = [2000,] + [500,]*4 + [1000]
+    sampleSize = [20000,] + [5000,]*4 + [10000]
+    # sampleSize = [5000,] + [2000,]*21 + [3000]
+    # sampleSize = [1000,]
     
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,
                             numIters=len(sampleSize),
@@ -330,11 +324,9 @@ def runReplicate(seed,mu_prior,sigma_prior,XY,sigma):
 
 if __name__ == '__main__':
     
-    np.random.seed(12345)
+    np.random.seed(123456)
     
-    dataDim = 2
-    
-    numReps = 5
+    numReps = 10
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
@@ -345,18 +337,23 @@ if __name__ == '__main__':
     # this is the additive noise variance which is known
     sigma = 1
     
-    m = .6
-    b = 1
-    
-    X = stat.multivariate_normal.rvs(np.zeros((dataDim-1,)),3*np.eye(dataDim-1),size=nData)
-    Y = (np.sum(m*X,axis=1,keepdims=True)+b if len(X.shape)>1 else m*X[:,None] + b) + stat.norm.rvs(0,sigma,size=(nData,1))
+    X,Y = load_data()
     X = np.concatenate([X,np.ones((X.shape[0],1))],axis=1) if len(X.shape)>1 else np.concatenate([X[:,None],np.ones((X.shape[0],1))],axis=1)
     XY = np.concatenate([X,Y],axis=1) if len(X.shape)>1 else np.concatenate([X[:,None],Y],axis=1)
     
-    # Define the prior's parameters
-    mu_prior = np.zeros(2)
-    sigma_prior = 3*np.eye(2)
+    dataDim = X.shape[1]
     
+    # Define the prior's parameters
+    mu_prior = np.zeros(dataDim)
+    sigma_prior = np.eye(dataDim)
+    
+    # # Create multiprocessing pool w/ 28 nodes for Hyak cluster
+    # with mp.Pool(28) as _pool:
+    #     result = _pool.map_async(runReplicate,
+    #                               list(seeds),
+    #                               callback=lambda x : print('Done!'))
+    #     result.wait()
+    #     resultList = result.get()
     rhoList = []
     paramsList = []
     for seed in list(seeds):
@@ -364,11 +361,8 @@ if __name__ == '__main__':
         rhoList.append(rho)
         paramsList.append(params)
     
-    # # average all of the GMM densities
-    
-    # # make a grid and show the density
-    fig,axes = plt.subplots(1,2)
-    plotGMM(paramsList, getAvgGmmPDF, axes[0])
+    # fig,axes = plt.subplots(1,2)
+    # plotGMM(paramsList, getAvgGmmPDF, axes[0])
     
     # get an approximation using Metropolis-Hastings
     def h(theta): 
@@ -381,15 +375,28 @@ if __name__ == '__main__':
         return np.exp(p(x))*h(x)
     
     samples = mh.metropolis_hastings(g,dataDim,50000)
+    # mh.tracePlots(samples)
+    # plotSamplesKDE(samples, axes[1])
     
-    plotSamplesKDE(samples, axes[1])
+    # axes[0].set_title('GMM Approximation')
+    # axes[1].set_title('Metropolis-Hastings Approximation')
     
-    betaHat = np.linalg.pinv(X.T @ X) @ X.T @ Y
+    pdf = getAvgGmmPDF(paramsList)
     
-    axes[0].set_title('GMM Approximation')
-    axes[1].set_title('Metropolis-Hastings Approximation')
+    def getAvgGmmSamples(paramsList,n):
+        
+        sampleList = []
+        
+        m = len(paramsList)
+        randParamI = np.random.choice(np.arange(0,m),n)
+        randDrawCounts = np.bincount(randParamI,minlength=m)
+        for i in range(m):
+            samples = sampleGmm(paramsList[i],randDrawCounts[i])
+            sampleList.append(samples)
+        
+        samples = np.stack(samples)
+        return samples
     
-    axes[0].scatter(m,b,color='orange')
-    axes[1].scatter(m,b,color='orange')
-    fig.suptitle(r'$\beta_1='+str(m)+r'$, $\beta_0='+str(b)+r'$')
+    gmmSamples = getAvgGmmSamples(paramsList, 50000)
+
     

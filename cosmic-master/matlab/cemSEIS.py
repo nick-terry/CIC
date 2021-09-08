@@ -305,7 +305,6 @@ class CEMSEIS(cem.CEM):
                     _rho = np.mean(fx * np.exp(px-qx_alpha) -\
                                     np.sum(np.exp(posPart-qx_alpha).filled(0)-\
                                     np.exp(negPart-qx_alpha).filled(0),axis=-1,keepdims=True)) + np.sum(beta)
-                # _rho = np.maximum(_rho,0)
             
         try:
             assert(not np.isnan(_rho))

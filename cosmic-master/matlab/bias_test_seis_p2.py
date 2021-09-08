@@ -13,6 +13,7 @@ import pickle
 import matplotlib.pyplot as plt
 
 from cem import q as getGmmPDF
+from cem import getAverageDensityFn as getAvgGmmPDF
 
 # Import cem test version (stored locally, NOT a package!)
 import cemSEIS as cem
@@ -141,7 +142,7 @@ def runReplicate(seed):
 
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    sampleSize = [4000,] + [1000,]*3 + [2000]
+    sampleSize = [8000,] + [2000,]*3 + [4000]
     
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,
                             numIters=len(sampleSize),
@@ -150,7 +151,7 @@ def runReplicate(seed):
                             log=True,
                             verbose=True,
                             covar='homogeneous',
-                            alpha=.1)
+                            alpha=.8)
     procedure.run()
     
     # Estimate the failure probability
@@ -239,7 +240,7 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 2
+    numReps = 5
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
@@ -252,16 +253,18 @@ if __name__ == '__main__':
     #     result.wait()
     #     resultList = result.get()
     rhoList = []
+    paramsList = []
     for seed in list(seeds):
         rho,ce,params,procedure = runReplicate(seed)
         rhoList.append(rho)
+        paramsList.append(params)
     
     # toCsvList = [[rho,] for rho in rhoList]
     # rhoList = [item[0] for item in resultList]
     # toCsvList = [[item[0],item[1]] for item in resultList]
     
     fig,axes = plt.subplots(1,2)
-    plotGMM(params, getGmmPDF, axes[0])
+    plotGMM(paramsList, getAvgGmmPDF, axes[0])
     
     def ISdensity(x):
         failed = 1 * (np.linalg.norm(x,axis=1,ord=2)**2 <= .1)
@@ -274,8 +277,8 @@ if __name__ == '__main__':
     stdErr = stat.sem(rhoList)
     hw = 1.96 * stdErr / np.sqrt(numReps)
     
-    print('Mean: {}'.format(np.mean(rhoList)))
-    print('Std Err: {}'.format(stat.sem(rhoList)))
+    print('Mean: {}'.format(mean))
+    print('Std Err: {}'.format(stdErr))
     
     print('95% CI for rho_bar: [{:.5f},{:.5f}]'.format(mean-hw,mean+hw))
     # Save the estimates of failure probabilty to csv

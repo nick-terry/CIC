@@ -153,7 +153,7 @@ def runReplicate(seed):
                             log=True,
                             verbose=True,
                             covar='homogeneous',
-                            alpha=.1,
+                            alpha=.8,
                             seis=False)
     procedure.run()
     
