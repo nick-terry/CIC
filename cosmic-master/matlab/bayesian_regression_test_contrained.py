@@ -184,6 +184,9 @@ def plotGMM(params,q,_ax=None,circle=False):
     ax.set_xlim(0,1.2)
     ax.set_ylim(0,1.2)
     
+    ax.axvline(1,ls='--',color='red')
+    ax.axhline(1,ls='--',color='red')
+    
     return ax
 
 def plotMVN(mu,sigma,_ax=None,circle=False):
@@ -251,6 +254,9 @@ def plotSamplesKDE(samples,_ax=None):
     ax.set_ylabel(r'$\beta_0$')
     ax.set_xlim(0,1.2)
     ax.set_ylim(0,1.2)
+    
+    ax.axvline(1,ls='--',color='red')
+    ax.axhline(1,ls='--',color='red')
     
     return ax
 
@@ -330,7 +336,7 @@ def runReplicate(seed,mu_prior,sigma_prior,XY,sigma):
 
 if __name__ == '__main__':
     
-    np.random.seed(12345)
+    np.random.seed(123456)
     
     dataDim = 2
     
