@@ -205,7 +205,7 @@ if __name__ == '__main__':
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(np.std(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('results_p3_unif.csv','w') as f:
+    with open('results_power_p3.csv','w') as f:
         writer = csv.writer(f)
         # Header row
         writer.writerow(['rho','final_k'])

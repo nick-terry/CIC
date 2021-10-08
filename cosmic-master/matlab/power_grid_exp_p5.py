@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Thu Oct  8 07:29:55 2020
-
+ 
 @author: nick
 """
 
@@ -15,14 +15,13 @@ import pickle
 
 # Import cem test version (stored locally, NOT a package!)
 import cemSEIS as cem
-import circlePacking as circ
 # import simengine as se
 
 # load lookup table for simulation results
 with open('simDict_10.pck','rb') as f:
     hDict = pickle.load(f)
 
-d = 20
+d = 5
 
 def p(x):
     """
@@ -60,9 +59,9 @@ def samplingOracle(n):
         The drawn samples
 
     """
-    
+
     x = stat.multivariate_normal.rvs(np.zeros((d,)),cov=np.eye(d),size=n)
-    
+
     return x
 
 def runReplicate(seed):
@@ -70,10 +69,10 @@ def runReplicate(seed):
     # Create a SimulationEngine for evaluating h(x)
     #sim = se.SimulationEngine()
     # dataDim = sim.numBranches
-    dataDim = d
+    dataDim = 5
     
     # the number of active components
-    nActive = d
+    nActive = 5
     
     # load lookup table for simulation results
     with open('simDict_10.pck','rb') as f:
@@ -104,7 +103,7 @@ def runReplicate(seed):
     def h(x):
         
         # Convert the time-of-failure vector to a boolean vector of contingencies
-        contingencies = getContingency(x,w=1.3)
+        contingencies = getContingency(x,w=1.2)
         
         if len(x.shape) > 1 and x.shape[0] > 1:
             n = x.shape[0]
@@ -127,7 +126,6 @@ def runReplicate(seed):
         failed = 1 * (x<=-w)
         
         contingency = np.zeros((x.shape[0],46))
-        
         shift = 1
         contingency[:,shift:nActive+shift] = failed
     
@@ -137,20 +135,15 @@ def runReplicate(seed):
     
     # Run the CEM procedure
     
+    # Variance of each coordinate in initial GMM
+    sigmaSq = 3
+    
     # Initial guess for GMM params
     k = 10
     alpha0 = np.ones(shape=(k,))/k
     
     # Randomly intialize the means of the Gaussian mixture components
-    # mu0 = np.random.multivariate_normal(np.zeros(dataDim),
-    #                                     np.eye(dataDim),
-    #                                     size=k)
-    
-    # Set covariance matrix to be identity
-    # sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
-    
-    # Half-width of cube centered at the origin which we want to explore    
-    hw=5
+    hw=2
     
     mu0 = np.random.uniform(-hw,hw,size=(k,d))
     
@@ -159,14 +152,14 @@ def runReplicate(seed):
     
     # Set covariance matrix to be identity
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
-    
+
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
     sampleSize = [8000,] + [2000,]*4 + [4000]
     # sampleSize = [1000,]
-    
+
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,numIters=len(sampleSize),sampleSize=sampleSize,seed=seed,
-                        log=True,verbose=True,covar='homogeneous')
+                        log=True,verbose=True,covar='homogeneous',allowSingular=True)
     procedure.run()
     
     # Estimate the failure probability
@@ -179,10 +172,10 @@ def runReplicate(seed):
 
 if __name__ == '__main__':
     
-    np.random.seed(42)
+    np.random.seed(420)
     
     # Use importance sampling to estimate probability of cascading blackout given
-    # a random N-2 contingency.
+    # a random N-2 contingency. 
     
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
@@ -200,8 +193,8 @@ if __name__ == '__main__':
         result.wait()
         resultList = result.get()
     # rhoList = []
-    # for seed in list(seeds):
-    #     rho,ce = runReplicate(seed)
+    # for i,seed in enumerate(list(seeds)):
+    #     rho,ce = runReplicate(i,seed)
     #     rhoList.append(rho)
     
     # toCsvList = [[rho,] for rho in rhoList]
@@ -211,7 +204,7 @@ if __name__ == '__main__':
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('results_power_p20.csv','w') as f:
+    with open('results_power_p5.csv','w') as f:
         writer = csv.writer(f)
         # Header row
         writer.writerow(['rho','final_k'])

@@ -152,8 +152,6 @@ def runReplicate(repNum,seed):
     # Set covariance matrix to be identity
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
 
-    # Set covariance matrix to be identity
-    sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
     sampleSize = [8000,] + [2000,]*4 + [4000]
@@ -181,33 +179,33 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 10
+    numReps = 100
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
     
     # Create multiprocessing pool w/ 28 nodes for Hyak cluster
-    # with mp.Pool(28) as _pool:
-    #     result = _pool.map_async(runReplicate,
-    #                               list(seeds),
-    #                               callback=lambda x : print('Done!'))
-    #     result.wait()
-    #     resultList = result.get()
-    rhoList = []
-    for i,seed in enumerate(list(seeds)):
-        rho,ce = runReplicate(i,seed)
-        rhoList.append(rho)
+    with mp.Pool(28) as _pool:
+        result = _pool.map_async(runReplicate,
+                                  list(seeds),
+                                  callback=lambda x : print('Done!'))
+        result.wait()
+        resultList = result.get()
+    # rhoList = []
+    # for i,seed in enumerate(list(seeds)):
+    #     rho,ce = runReplicate(i,seed)
+    #     rhoList.append(rho)
     
     # toCsvList = [[rho,] for rho in rhoList]
-    # rhoList = [item[0] for item in resultList]
-    # toCsvList = [[item[0],item[1]] for item in resultList]
+    rhoList = [item[0] for item in resultList]
+    toCsvList = [[item[0],item[1]] for item in resultList]
     
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    # with open('results_p5_unif.csv','w') as f:
-    #     writer = csv.writer(f)
-    #     # Header row
-    #     writer.writerow(['rho','final_k'])
-    #     writer.writerows(toCsvList)
+    with open('results_power_p5.csv','w') as f:
+        writer = csv.writer(f)
+        # Header row
+        writer.writerow(['rho','final_k'])
+        writer.writerows(toCsvList)
     

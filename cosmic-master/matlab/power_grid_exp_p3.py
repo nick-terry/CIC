@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Thu Oct  8 07:29:55 2020
-
+ 
 @author: nick
 """
 
@@ -20,6 +20,8 @@ import cemSEIS as cem
 # load lookup table for simulation results
 with open('simDict_10.pck','rb') as f:
     hDict = pickle.load(f)
+
+d = 3
 
 def p(x):
     """
@@ -57,9 +59,9 @@ def samplingOracle(n):
         The drawn samples
 
     """
-    
-    x = stat.multivariate_normal.rvs(np.zeros((3,)),cov=np.eye(3),size=n)
-    
+
+    x = stat.multivariate_normal.rvs(np.zeros((d,)),cov=np.eye(d),size=n)
+
     return x
 
 def runReplicate(seed):
@@ -67,10 +69,10 @@ def runReplicate(seed):
     # Create a SimulationEngine for evaluating h(x)
     #sim = se.SimulationEngine()
     # dataDim = sim.numBranches
-    dataDim = 3
+    dataDim = d
     
     # the number of active components
-    nActive = 3
+    nActive = d
     
     # load lookup table for simulation results
     with open('simDict_10.pck','rb') as f:
@@ -101,7 +103,7 @@ def runReplicate(seed):
     def h(x):
         
         # Convert the time-of-failure vector to a boolean vector of contingencies
-        contingencies = getContingency(x,w=.05)
+        contingencies = getContingency(x,w=1)
         
         if len(x.shape) > 1 and x.shape[0] > 1:
             n = x.shape[0]
@@ -120,15 +122,12 @@ def runReplicate(seed):
     
     def getContingency(x,w=.5):
         
-        failed = 1 * (-w/2 <= x) * (x <= w/2)
+        # failed = 1 * (-w/2 <= x) * (x <= w/2)
+        failed = 1 * (x<=-w)
         
         contingency = np.zeros((x.shape[0],46))
-        # need to shift for p=3 for blackout to occur
-        shift = 2
+        shift = 1
         contingency[:,shift:nActive+shift] = failed
-        contingency[:,0] = 1
-        contingency[:,0] = 1
-        contingency[:,8] = 1
     
         return contingency
     
@@ -144,19 +143,25 @@ def runReplicate(seed):
     alpha0 = np.ones(shape=(k,))/k
     
     # Randomly intialize the means of the Gaussian mixture components
-    mu0 = np.random.multivariate_normal(np.zeros(dataDim),
-                                        np.eye(dataDim),
-                                        size=k)
+    hw=2
     
+    mu0 = np.random.uniform(-hw,hw,size=(k,d))
+    
+    # Variance of each coordinate in initial GMM
+    sigmaSq = 3 * hw**2
+    
+    # Set covariance matrix to be identity
+    sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
+
     # Set covariance matrix to be identity
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
     sampleSize = [8000,] + [2000,]*4 + [4000]
     # sampleSize = [1000,]
-    
+
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,numIters=len(sampleSize),sampleSize=sampleSize,seed=seed,
-                        log=True,verbose=True,covar='homogeneous')
+                        log=True,verbose=True,covar='homogeneous',allowSingular=True)
     procedure.run()
     
     # Estimate the failure probability
@@ -169,41 +174,42 @@ def runReplicate(seed):
 
 if __name__ == '__main__':
     
-    np.random.seed(42)
+    np.random.seed(420)
     
     # Use importance sampling to estimate probability of cascading blackout given
-    # a random N-2 contingency.
+    # a random N-2 contingency. 
     
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 100
+    numReps = 10
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
     
     # Create multiprocessing pool w/ 28 nodes for Hyak cluster
-    with mp.Pool(28) as _pool:
-        result = _pool.map_async(runReplicate,
-                                  list(seeds),
-                                  callback=lambda x : print('Done!'))
-        result.wait()
-        resultList = result.get()
-    # rhoList = []
-    # for seed in list(seeds):
-    #     rho,ce = runReplicate(seed)
-    #     rhoList.append(rho)
+    # with mp.Pool(28) as _pool:
+    #     result = _pool.map_async(runReplicate,
+    #                               list(seeds),
+    #                               callback=lambda x : print('Done!'))
+    #     result.wait()
+    #     resultList = result.get()
     
-    # toCsvList = [[rho,] for rho in rhoList]
-    rhoList = [item[0] for item in resultList]
-    toCsvList = [[item[0],item[1]] for item in resultList]
+    rhoList = []
+    for i,seed in enumerate(list(seeds)):
+        rho,ce = runReplicate(seed)
+        rhoList.append(rho)
+    
+    toCsvList = [[rho,] for rho in rhoList]
+    # rhoList = [item[0] for item in resultList]
+    # toCsvList = [[item[0],item[1]] for item in resultList]
     
     print('Mean: {}'.format(np.mean(rhoList)))
-    print('Std Err: {}'.format(stat.sem(rhoList)))
+    print('Std Err: {}'.format(np.std(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('results_p3_homog.csv','w') as f:
-        writer = csv.writer(f)
-        # Header row
-        writer.writerow(['rho','final_k'])
-        writer.writerows(toCsvList)
+    # with open('results_power_p3.csv','w') as f:
+    #     writer = csv.writer(f)
+    #     # Header row
+    #     writer.writerow(['rho','final_k'])
+    #     writer.writerows(toCsvList)
     

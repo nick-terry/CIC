@@ -11,6 +11,7 @@ import numpy as np
 import csv
 import pickle
 import matplotlib.pyplot as plt
+import multiprocessing as mp
 
 from cem import q as getGmmPDF
 from cem import getAverageDensityFn as getAvgGmmPDF
@@ -151,16 +152,17 @@ def runReplicate(seed):
                             log=True,
                             verbose=True,
                             covar='homogeneous',
-                            alpha=.8)
+                            alpha=.1)
     procedure.run()
     
     # Estimate the failure probability
     rho = procedure.rho()
     k = procedure.paramsList[-1].k()
-    
+    errored = procedure.errored
+    covardiag = procedure.paramsList[-1].get()[-1][0,0,0]
     print('Done with replicate!')
     
-    return rho,k,procedure.paramsList[-1],procedure
+    return rho,k,errored,covardiag
     
 def plotGMM(params,q,_ax=None,circle=False):
     coords = np.linspace(-5,5,num=1000)
@@ -232,7 +234,7 @@ def plotDensity(densityFn,_ax=None):
 
 if __name__ == '__main__':
     
-    np.random.seed(420)
+    np.random.seed(1234)
     
     # Use importance sampling to estimate probability of cascading blackout given
     # a random N-2 contingency.
@@ -240,7 +242,7 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 5
+    numReps = 100
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
@@ -261,17 +263,17 @@ if __name__ == '__main__':
     
     # toCsvList = [[rho,] for rho in rhoList]
     # rhoList = [item[0] for item in resultList]
-    # toCsvList = [[item[0],item[1]] for item in resultList]
+    # toCsvList = [[item[0],item[1],item[2],item[3]] for item in resultList]
     
-    fig,axes = plt.subplots(1,2)
-    plotGMM(paramsList, getAvgGmmPDF, axes[0])
+    # fig,axes = plt.subplots(1,2)
+    # plotGMM(paramsList, getAvgGmmPDF, axes[0])
     
-    def ISdensity(x):
-        failed = 1 * (np.linalg.norm(x,axis=1,ord=2)**2 <= .1)
+    # def ISdensity(x):
+    #     failed = 1 * (np.linalg.norm(x,axis=1,ord=2)**2 <= .1)
         
-        return stat.multivariate_normal.pdf(x,np.zeros(2),np.eye(2)) * failed
+    #     return stat.multivariate_normal.pdf(x,np.zeros(2),np.eye(2)) * failed
  
-    plotDensity(ISdensity,axes[1])
+    # plotDensity(ISdensity,axes[1])
     
     mean = np.mean(rhoList)
     stdErr = stat.sem(rhoList)
@@ -285,6 +287,6 @@ if __name__ == '__main__':
     # with open('bias_results_p2.csv','w') as f:
     #     writer = csv.writer(f)
     #     # Header row
-    #     writer.writerow(['rho','final_k'])
+    #     writer.writerow(['rho','final_k','had_error','covardiag'])
     #     writer.writerows(toCsvList)
     

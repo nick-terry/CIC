@@ -245,7 +245,50 @@ class CEMSEIS(cem.CEM):
         
         # self.covar_regularization = 10**-100
         self.covar_regularization = 0
+    
+    def c_bar(self,params,gmm=False):
+        """
+        Estimate the cross-entropy from the importance sampling
+        distribution defined by eta, using the estimator from equation 3.7 of
+        the paper.
         
+        See eqn 3.18
+    
+        Parameters
+        ----------
+        params : list
+            Parameters of the approximation we wish to estimate cross entropy for
+    
+    
+        Returns
+        -------
+        _c_bar : float
+            The estimated cross-entropy.
+    
+        """
+        if not gmm:
+            X = np.concatenate(self.X,axis=0)
+        else:
+            X = np.concatenate(self.X_gmm,axis=0)
+            
+        log_q_theta = self.log_q(params)
+        llh = log_q_theta(X)
+        
+        n = llh.shape[0]
+        
+        # Compute c_bar w/o log transform   
+        Hx = np.concatenate(self.hList, axis=0)
+
+        px = np.concatenate(self.logpxList, axis=0)
+        qx = np.concatenate(self.logqxList, axis=0)
+        
+        qx_mix = np.exp(np.log(self.alpha) + px) + np.exp(np.log(1-self.alpha) + qx)
+        Wx = px/qx_mix
+        
+        c_bar = -np.sum(Hx * Wx * llh)/n
+            
+        return c_bar
+    
     def rho(self):
         """
         Vectorized computation of estimator of event probability. Using the MCV
@@ -775,7 +818,7 @@ class CEMSEIS(cem.CEM):
                 # Compute cross-entropy for the updated params
                 # ce = self.c_bar(params,gmm=True)
                 try:
-                    ce = self.c_bar(params,gmm=False)
+                    ce = self.c_bar(params)
                 except RuntimeWarning as e:
                     
                     # If this happens, we just consider it a failure
@@ -801,7 +844,7 @@ class CEMSEIS(cem.CEM):
             
             # Compute cross-entropy for the updated params
             try:
-                ce = self.c_bar(params,gmm=False)
+                ce = self.c_bar(params)
             except Exception as e:
                 print(e)
                 raise e
@@ -889,11 +932,15 @@ class CEMSEIS(cem.CEM):
             # self.pxList.append(np.exp(log_px))
             self.logpxList.append(log_px)
             # self.qxList.append(np.exp(log_qx))
-            self.logqxList.append(log_qx)
             
-            gmmStIndex = int(np.ceil(nSamples * self.alpha))
+            # Compute SEIS mixture
+            log_qx_mix = log_qx#self.alpha * np.exp(log_px) + (1-self.alpha) * np.exp(log_qx)
+            
+            self.logqxList.append(log_qx_mix)
+            
+            # gmmStIndex = int(np.ceil(nSamples * self.alpha))
             # log_Wx = log_px[gmmStIndex:] - log_qx[gmmStIndex:]
-            log_Wx = log_px - log_qx
+            log_Wx = log_px - log_qx_mix
             
             # try:
             #     assert(not np.any(Wx==np.inf))

@@ -153,7 +153,7 @@ def runReplicate(seed):
                             log=True,
                             verbose=True,
                             covar='homogeneous',
-                            alpha=.8,
+                            alpha=.1,
                             seis=True)
     procedure.run()
     
@@ -169,7 +169,7 @@ def runReplicate(seed):
 
 if __name__ == '__main__':
     
-    np.random.seed(4123)
+    np.random.seed(1234)
     
     # Use importance sampling to estimate probability of cascading blackout given
     # a random N-2 contingency.
@@ -177,26 +177,26 @@ if __name__ == '__main__':
     # x = np.random.normal(10,3,size=(5,dataDim))
     # Hx = h(x)
     
-    numReps = 5
+    numReps = 100
     
     # Get random seeds for each replication
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
     
     # # Create multiprocessing pool w/ 28 nodes for Hyak cluster
-    # with mp.Pool(28) as _pool:
-    #     result = _pool.map_async(runReplicate,
-    #                               list(seeds),
-    #                               callback=lambda x : print('Done!'))
-    #     result.wait()
-    #     resultList = result.get()
-    rhoList = []
-    for seed in list(seeds):
-        rho,ce,_,_ = runReplicate(seed)
-        rhoList.append(rho)
+    with mp.Pool(28) as _pool:
+        result = _pool.map_async(runReplicate,
+                                  list(seeds),
+                                  callback=lambda x : print('Done!'))
+        result.wait()
+        resultList = result.get()
+    # rhoList = []
+    # for seed in list(seeds):
+    #     rho,ce,_,_ = runReplicate(seed)
+    #     rhoList.append(rho)
     
-    toCsvList = [[rho,] for rho in rhoList]
-    # rhoList = [item[0] for item in resultList]
-    # toCsvList = [[item[0],item[1],item[2],item[3]] for item in resultList]
+    # toCsvList = [[rho,] for rho in rhoList]
+    rhoList = [item[0] for item in resultList]
+    toCsvList = [[item[0],item[1],item[2],item[3]] for item in resultList]
     
     mean = np.mean(rhoList)
     stdErr = stat.sem(rhoList)
@@ -207,9 +207,9 @@ if __name__ == '__main__':
     
     print('95% CI for rho_bar: [{:.5f},{:.5f}]'.format(mean-hw,mean+hw))
     # Save the estimates of failure probabilty to csv
-    # with open('bias_results_p3.csv','w') as f:
-    #     writer = csv.writer(f)
-    #     # Header row
-    #     writer.writerow(['rho','final_k','had_error','covardiag'])
-    #     writer.writerows(toCsvList)
+    with open('bias_results_p3.csv','w') as f:
+        writer = csv.writer(f)
+        # Header row
+        writer.writerow(['rho','final_k','had_error','covardiag'])
+        writer.writerows(toCsvList)
     

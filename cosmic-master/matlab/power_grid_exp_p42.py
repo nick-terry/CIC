@@ -103,7 +103,7 @@ def runReplicate(seed):
     def h(x):
         
         # Convert the time-of-failure vector to a boolean vector of contingencies
-        contingencies = getContingency(x,w=.05)
+        contingencies = getContingency(x,w=1.3)
         
         if len(x.shape) > 1 and x.shape[0] > 1:
             n = x.shape[0]
@@ -122,11 +122,12 @@ def runReplicate(seed):
     
     def getContingency(x,w=.5):
         
-        failed = 1 * (-w/2 <= x) * (x <= w/2)
+        # failed = 1 * (-w/2 <= x) * (x <= w/2)
+        failed = 1 * (x<=-w)
         
         contingency = np.zeros((x.shape[0],46))
         
-        shift = 0
+        shift = 1
         contingency[:,shift:nActive+shift] = failed
     
         return contingency
@@ -142,10 +143,13 @@ def runReplicate(seed):
     k = 10
     alpha0 = np.ones(shape=(k,))/k
     
-    # Randomly intialize the means of the Gaussian mixture components
-    mu0 = np.random.multivariate_normal(np.zeros(dataDim),
-                                        np.eye(dataDim),
-                                        size=k)
+    # Half-width of cube centered at the origin which we want to explore    
+    hw=2
+    
+    mu0 = np.random.uniform(-hw,hw,size=(k,d))
+    
+    # Variance of each coordinate in initial GMM
+    sigmaSq = 3 * hw**2
     
     # Set covariance matrix to be identity
     sigma0 = sigmaSq * np.repeat(np.eye(dataDim)[None,:,:],k,axis=0)
@@ -200,7 +204,7 @@ if __name__ == '__main__':
     print('Mean: {}'.format(np.mean(rhoList)))
     print('Std Err: {}'.format(stat.sem(rhoList)))
     # Save the estimates of failure probabilty to csv
-    with open('results_p42_homog.csv','w') as f:
+    with open('results_power_p42.csv','w') as f:
         writer = csv.writer(f)
         # Header row
         writer.writerow(['rho','final_k'])

@@ -226,15 +226,69 @@ class CEM:
         
         n = llh.shape[0]
         
-        # We may get overflow here, in which case we can try to replace the
-        # offending values
-        Hx_Wx = np.nan_to_num(np.exp(np.concatenate(self.Hx_WxList)))
+        # Compute c_bar w/o log transform
+        Hx_Wx = np.exp(np.concatenate(self.Hx_WxList))
+        c_bar2 = -np.sum(Hx_Wx * llh)/n
         
-        _c_bar = -np.sum(Hx_Wx*llh) / n
+        # Use b trick
+        Hx_Wx = np.concatenate(self.Hx_WxList)
         
-        # _c_bar = np.exp(_c_bar)
+        llh_gtz = llh > 0
+        llh_p,llh_n = llh[llh_gtz],-llh[~llh_gtz]
+        
+        posX = Hx_Wx[llh_gtz]+np.log(llh_p)-np.log(n)
+        negX = Hx_Wx[~llh_gtz]+np.log(llh_n)-np.log(n)
+        
+        # Get magic constant b
+        # mp = np.max(posX) if posX.size>0 else -np.inf
+        # mn = np.max(negX) if negX.size>0 else -np.inf
+        # b = max(mp,mn)
+        
+        # log_c_bar = b + np.log(-(np.sum(np.exp(posX-b)) -\
+        #                          np.sum(np.exp(negX-b))))
+        
+        if posX.size > 0: 
+            bp = np.max(posX)
+            lp = bp + spc.logsumexp(posX-bp)
+        else:
+            lp = -np.inf
+        
+        if negX.size > 0:
+            bn = np.max(negX)
+            ln = bn + spc.logsumexp(negX-bn)
+        else:
+            ln = -np.inf
+        
+        # Try to exponentiate the log values for finishing calculation
+        np.seterr(over='raise')
+        
+        if np.isinf(lp):
+            pos = 0
             
-        return _c_bar
+        else:
+            try:
+                pos = np.exp(lp.astype(np.float128))
+            except Exception as e:
+                print('Overflow during CE computation! (positive part')
+                print(lp)
+                raise e
+        
+        if np.isinf(ln):
+            neg = 0
+            
+        else:
+            try:
+                neg = np.exp(ln.astype(np.float128))
+            except Exception as e:
+                print('Overflow during CE computation! (negative part)')
+                print(ln)
+                raise e
+            
+        np.seterr(over='warn')
+        
+        c_bar = -(pos - neg)
+            
+        return c_bar
     
     def rho(self):
         """
@@ -783,6 +837,8 @@ class CEM:
             The list of all intial params generated.
 
         """
+        
+        #TODO : fix having not homog covar initially w/ no samples
         initParamsList = []
         
         # At stage zero, randomly choose all GMM params by drawing from standard MVG dist.
@@ -926,8 +982,12 @@ class CEM:
         v = np.maximum(v,lambda_max/self.gamma*np.ones_like(v))
         
         # Reconstruct covar matrices from the decomposition
-        for k in range(sigma.shape[0]):
-            sigma[k] = (W[k] @ np.diag(v[k]) @ np.linalg.inv(W[k])).astype(np.float128)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+        
+            # Suppress warnings for 
+            for k in range(sigma.shape[0]):
+                sigma[k] = (W[k] @ np.diag(v[k]) @ np.linalg.inv(W[k])).astype(np.float128)
         
         return sigma
     

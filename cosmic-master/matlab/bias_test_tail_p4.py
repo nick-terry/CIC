@@ -114,9 +114,9 @@ def runReplicate(seed):
     
     def h(x):
         
-        # failed = np.product(1 * (x > 1.5), axis=1, keepdims=True)
-        A = np.eye(dataDim)
-        failed = np.sum((x @ A) * x,axis=1,keepdims=True)<= R
+        failed = np.product(1 * (x > R), axis=1, keepdims=True)
+        # A = np.eye(dataDim)
+        # failed = np.sum((x @ A) * x,axis=1,keepdims=True)<= R
         
         return failed
     
@@ -132,7 +132,7 @@ def runReplicate(seed):
     alpha0 = np.ones(shape=(k,))/k
     
     # Randomly intialize the means of the Gaussian mixture components
-    hw=1
+    hw=5
     
     mu0 = np.random.uniform(-hw,hw,size=(k,d))
     
@@ -144,7 +144,7 @@ def runReplicate(seed):
 
     initParams = cem.GMMParams(alpha0, mu0, sigma0, dataDim)
 
-    sampleSize = [8000,] + [2000,]*4 + [4000]
+    sampleSize = [4000,] + [1000,]*4 + [2000]
     
     procedure = cem.CEMSEIS(initParams,p,samplingOracle,h,
                             numIters=len(sampleSize),
@@ -181,20 +181,20 @@ if __name__ == '__main__':
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
     
     # # Create multiprocessing pool w/ 28 nodes for Hyak cluster
-    # with mp.Pool(28) as _pool:
-    #     result = _pool.map_async(runReplicate,
-    #                               list(seeds),
-    #                               callback=lambda x : print('Done!'))
-    #     result.wait()
-    #     resultList = result.get()
-    rhoList = []
-    for seed in list(seeds):
-        rho,ce = runReplicate(seed)
-        rhoList.append(rho)
+    with mp.Pool(28) as _pool:
+        result = _pool.map_async(runReplicate,
+                                  list(seeds),
+                                  callback=lambda x : print('Done!'))
+        result.wait()
+        resultList = result.get()
+    # rhoList = []
+    # for seed in list(seeds):
+    #     rho,ce = runReplicate(seed)
+    #     rhoList.append(rho)
     
-    toCsvList = [[rho,] for rho in rhoList]
-    # rhoList = [item[0] for item in resultList]
-    # toCsvList = [[item[0],item[1]] for item in resultList]
+    # toCsvList = [[rho,] for rho in rhoList]
+    rhoList = [item[0] for item in resultList]
+    toCsvList = [[item[0],item[1]] for item in resultList]
     
     mean = np.mean(rhoList)
     stdErr = stat.sem(rhoList)
@@ -205,9 +205,9 @@ if __name__ == '__main__':
     
     print('95% CI for rho_bar: [{:.5f},{:.5f}]'.format(mean-hw,mean+hw))
     # Save the estimates of failure probabilty to csv
-    # with open('bias_results_p4.csv','w') as f:
-    #     writer = csv.writer(f)
-    #     # Header row
-    #     writer.writerow(['rho','final_k'])
-    #     writer.writerows(toCsvList)
+    with open('bias_results_tail_p4.csv','w') as f:
+        writer = csv.writer(f)
+        # Header row
+        writer.writerow(['rho','final_k'])
+        writer.writerows(toCsvList)
     
