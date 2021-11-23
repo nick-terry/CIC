@@ -20,10 +20,6 @@ from CIC.cem import getAverageDensityFn as getAvgGmmPDF
 
 d = 3
 
-# load lookup table for simulation results
-with open('simDict_10.pck','rb') as f:
-    hDict = pickle.load(f)
-
 def p(x):
     """
     Compute the true log likelihood of x from normal distribution
@@ -107,7 +103,7 @@ def runReplicate(seed):
     #sim = se.SimulationEngine()
     # dataDim = sim.numBranches
     dataDim = d
-    R = .25
+    R = .346
     
     def h(x):
         
@@ -180,20 +176,27 @@ if __name__ == '__main__':
     seeds = np.ceil(np.random.uniform(0,99999,size=numReps)).astype(int)
     
     # # Create multiprocessing pool w/ 28 nodes for Hyak cluster
-    with mp.Pool(28) as _pool:
-        result = _pool.map_async(runReplicate,
-                                  list(seeds),
-                                  callback=lambda x : print('Done!'))
-        result.wait()
-        resultList = result.get()
-    # rhoList = []
-    # for seed in list(seeds):
-    #     rho,ce,_,_ = runReplicate(seed)
-    #     rhoList.append(rho)
+    # with mp.Pool(28) as _pool:
+    #     result = _pool.map_async(runReplicate,
+    #                               list(seeds),
+    #                               callback=lambda x : print('Done!'))
+    #     result.wait()
+    #     resultList = result.get()
+    rhoList = []
+    kList = []
+    errList = []
+    covList = []
     
-    # toCsvList = [[rho,] for rho in rhoList]
-    rhoList = [item[0] for item in resultList]
-    toCsvList = [[item[0],item[1],item[2],item[3]] for item in resultList]
+    for seed in list(seeds):
+        rho,k,errored,covardiag = runReplicate(seed)
+        rhoList.append(rho)
+        kList.append(k)
+        errList.append(errored)
+        covList.append(covardiag)
+    
+    toCsvList = [[rho,k,err,cov] for rho,k,err,cov in zip(rhoList,kList,errList,covList)]
+    # rhoList = [item[0] for item in resultList]
+    # toCsvList = [[item[0],item[1],item[2],item[3]] for item in resultList]
     
     mean = np.mean(rhoList)
     stdErr = stat.sem(rhoList)
