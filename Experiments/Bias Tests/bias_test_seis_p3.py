@@ -125,7 +125,7 @@ def runReplicate(seed):
     alpha0 = np.ones(shape=(k,))/k
     
     # Randomly intialize the means of the Gaussian mixture components
-    hw=5
+    hw=3
     
     mu0 = np.random.uniform(-hw,hw,size=(k,d))
     
@@ -162,7 +162,8 @@ def runReplicate(seed):
 
 if __name__ == '__main__':
     
-    np.random.seed(1234)
+    # np.random.seed(1234)
+    np.random.seed(54312)
     
     # Use importance sampling to estimate probability of cascading blackout given
     # a random N-2 contingency.

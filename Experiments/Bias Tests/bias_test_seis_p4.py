@@ -12,7 +12,6 @@ import numpy as np
 import multiprocessing as mp
 import csv
 import pickle
-import circlePacking as circ
 import matplotlib.pyplot as plt
 
 import CIC.cemSEIS as cem
@@ -20,10 +19,6 @@ from CIC.cem import q as getGmmPDF
 
 
 d = 4
-
-# load lookup table for simulation results
-with open('simDict_10.pck','rb') as f:
-    hDict = pickle.load(f)
 
 def p(x):
     """
@@ -158,14 +153,18 @@ def runReplicate(seed):
     # Estimate the failure probability
     rho = procedure.rho()
     k = procedure.paramsList[-1].k()
+    errored = procedure.errored
+    covardiag = procedure.paramsList[-1].get()[-1][0,0,0]
     
     print('Done with replicate!')
     
-    return rho,k
+    return rho,k,errored,covardiag
 
 if __name__ == '__main__':
     
-    np.random.seed(1234)
+    # np.random.seed(1234)
+    # np.random.seed(54321)
+    np.random.seed(54345)
     
     # Use importance sampling to estimate probability of cascading blackout given
     # a random N-2 contingency.
@@ -186,11 +185,18 @@ if __name__ == '__main__':
     #     result.wait()
     #     resultList = result.get()
     rhoList = []
+    kList = []
+    errList = []
+    covList = []
+   
     for seed in list(seeds):
-        rho,ce = runReplicate(seed)
+        rho,k,errored,covardiag = runReplicate(seed)
         rhoList.append(rho)
-    
-    toCsvList = [[rho,] for rho in rhoList]
+        kList.append(k)
+        errList.append(errored)
+        covList.append(covardiag)
+   
+    toCsvList = [[rho,k,err,cov] for rho,k,err,cov in zip(rhoList,kList,errList,covList)]
     # rhoList = [item[0] for item in resultList]
     # toCsvList = [[item[0],item[1]] for item in resultList]
     
@@ -203,9 +209,9 @@ if __name__ == '__main__':
     
     print('95% CI for rho_bar: [{:.5f},{:.5f}]'.format(mean-hw,mean+hw))
     # Save the estimates of failure probabilty to csv
-    # with open('bias_results_p4.csv','w') as f:
-    #     writer = csv.writer(f)
-    #     # Header row
-    #     writer.writerow(['rho','final_k'])
-    #     writer.writerows(toCsvList)
+    with open('bias_results_p4.csv','w') as f:
+        writer = csv.writer(f)
+        # Header row
+        writer.writerow(['rho','final_k'])
+        writer.writerows(toCsvList)
     
